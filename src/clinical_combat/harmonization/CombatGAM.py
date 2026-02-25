@@ -6,7 +6,7 @@ from statsmodels.gam.api import GLMGam, BSplines
 from clinical_combat.harmonization.Combat import Combat
 
 
-class CombatGam(Combat):
+class CombatGAM(Combat):
     """
     ComBat GAM: Harmonize the moving site to the reference site.
     The covariate regression is estimated with a GAM (splines), in the spirit of
@@ -124,17 +124,17 @@ class CombatGam(Combat):
         cols = {}
 
         if "age" not in data.columns:
-            raise ValueError("CombatGam: missing column 'age' in data.")
+            raise ValueError("CombatGAM: missing column 'age' in data.")
         cols["age"] = data["age"].astype(float).to_numpy()
 
         if not self.ignore_sex_covariate:
             if "sex" not in data.columns:
-                raise ValueError("CombatGam: missing column 'sex' in data.")
+                raise ValueError("CombatGAM: missing column 'sex' in data.")
             cols["sex"] = data["sex"].astype(float).to_numpy()
 
         if not self.ignore_handedness_covariate:
             if "handedness" not in data.columns:
-                raise ValueError("CombatGam: missing column 'handedness' in data.")
+                raise ValueError("CombatGAM: missing column 'handedness' in data.")
             cols["handedness"] = data["handedness"].astype(float).to_numpy()
 
         return pd.DataFrame(cols)
@@ -152,7 +152,7 @@ class CombatGam(Combat):
             Statsmodels BSplines object.
         """
         if X_spline.ndim != 2:
-            raise ValueError("CombatGam: X_spline must be 2D.")
+            raise ValueError("CombatGAM: X_spline must be 2D.")
         if X_spline.shape[1] == 1:
             return BSplines(
                 X_spline,
@@ -243,7 +243,7 @@ class CombatGam(Combat):
             Predicted mean for each row.
         """
         if self.gam_linear_cols is None:
-            raise AssertionError("CombatGam: gam_linear_cols is not initialized.")
+            raise AssertionError("CombatGAM: gam_linear_cols is not initialized.")
 
         do_smooth = bool(self.gam_bspline_cfg and self.gam_bspline_cfg.get("perform_smoothing", False))
         if bs is None and do_smooth:
@@ -367,7 +367,7 @@ class CombatGam(Combat):
                 smooth_cols_global = smooth_cols
             else:
                 if linear_cols != linear_cols_global or smooth_cols != smooth_cols_global:
-                    raise AssertionError("CombatGam: inconsistent GAM design columns across bundles.")
+                    raise AssertionError("CombatGAM: inconsistent GAM design columns across bundles.")
 
         self.gam_params = np.vstack([p.reshape(1, -1) for p in gam_params])
         self.gam_linear_cols = linear_cols_global
@@ -470,7 +470,7 @@ class CombatGam(Combat):
             Model-predicted mean for the input covariates.
         """
         if self.gam_params is None:
-            raise AssertionError("CombatGam: model is not fitted.")
+            raise AssertionError("CombatGAM: model is not fitted.")
 
         idx = list(self.bundle_names).index(bundle)
 
@@ -530,9 +530,9 @@ class CombatGam(Combat):
         - A sidecar pickle stores GAM column config safely.
         """
         if self.gam_params is None:
-            raise AssertionError("CombatGam: gam_params missing.")
+            raise AssertionError("CombatGAM: gam_params missing.")
         if self.sigma is None:
-            raise AssertionError("CombatGam: sigma missing.")
+            raise AssertionError("CombatGAM: sigma missing.")
 
         p = self.gam_params.shape[1]
 

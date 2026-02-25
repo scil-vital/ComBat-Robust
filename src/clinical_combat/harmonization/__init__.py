@@ -5,7 +5,7 @@ import ast
 
 from clinical_combat.harmonization.CombatClinical import CombatClinical
 from clinical_combat.harmonization.Covbat import CovBat
-from clinical_combat.harmonization.CombatGAM import CombatGam
+from clinical_combat.harmonization.CombatGAM import CombatGAM
 from clinical_combat.harmonization.CombatPairwise import CombatPairwise
 
 
@@ -51,7 +51,7 @@ def from_model_name(
             tau=tau,
         )
     elif name == "gam":
-        QC = CombatGam(
+        QC = CombatGAM(
             ignore_sex_covariate=ignore_sex_covariate,
             ignore_handedness_covariate=ignore_handedness_covariate,
             use_empirical_bayes=use_empirical_bayes,
