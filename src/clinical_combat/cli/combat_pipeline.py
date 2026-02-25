@@ -17,6 +17,9 @@ Harmonization methods:
     clinical (default):
         uses a priori from the reference site to fit the moving site
         (Beta_mov, variance)
+    gam:
+        uses a GAM (spline on age) for the covariate effect, while
+        estimating site effects with gamma/delta.
 
 NOTE: the harmonization parameters (regul, degree, nu, tau) are preset
       according to the harmonization method chosen. See default settings.
@@ -69,7 +72,7 @@ def _build_arg_parser():
 
     p.add_argument("-m", "--method",
                    default="clinical",
-                   choices=["pairwise", "clinical"],
+                   choices=["pairwise", "clinical", "gam"],
                    help="Harmonization method.")
     p.add_argument("--ignore_sex",
                    action="store_true",
@@ -117,6 +120,26 @@ def _build_arg_parser():
                    help="Combat Clinical hyperparameter for "
                         "the covariate fit of the moving site data. "
                         "It must be >= 1. [%(default)s]")
+    p.add_argument("--smooth_terms",
+                   nargs="+",
+                   default=["age"],
+                   help="Covariates to smooth with GAM. Use 'none' to disable smoothing. [%(default)s]")
+    p.add_argument("--df_spline",
+                   type=int,
+                   default=10,
+                   help="Number of spline basis functions for each GAM smooth term. [%(default)s]")
+    p.add_argument("--spline_degree",
+                   type=int,
+                   default=3,
+                   help="Degree of the GAM B-spline basis. [%(default)s]")
+    p.add_argument("--smooth_lower",
+                   type=float,
+                   default=None,
+                   help="Optional lower bound for GAM spline knots.")
+    p.add_argument("--smooth_upper",
+                   type=float,
+                   default=None,
+                   help="Optional upper bound for GAM spline knots.")
     p.add_argument("--bundles",
                    nargs="+",
                    help="List of bundle to use for figures. "
@@ -164,6 +187,9 @@ def main():
         args.bundles = all_bundles[0:1]
         logging.warning("No valid input bundle. "
                         "Selecting bundle %s", args.bundles)
+
+    if args.smooth_terms == ["none"]:
+        args.smooth_terms = []
 
     # model file name
     if len(args.output_model_filename) == 0:
@@ -221,6 +247,16 @@ def main():
         cmd += " --regul_mov " + str(args.regul_mov)
     if args.degree:
         cmd += " --degree " + str(args.degree)
+    if args.smooth_terms:
+        cmd += " --smooth_terms " + " ".join(args.smooth_terms)
+    if args.df_spline:
+        cmd += " --df_spline " + str(args.df_spline)
+    if args.spline_degree:
+        cmd += " --spline_degree " + str(args.spline_degree)
+    if args.smooth_lower is not None:
+        cmd += " --smooth_lower " + str(args.smooth_lower)
+    if args.smooth_upper is not None:
+        cmd += " --smooth_upper " + str(args.smooth_upper)
     if args.ignore_sex:
         cmd += " --ignore_sex"
     if args.ignore_handedness:
