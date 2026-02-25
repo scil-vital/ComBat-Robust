@@ -17,15 +17,12 @@ Harmonization methods:
     clinical (default):
         uses a priori from the reference site to fit the moving site
         (Beta_mov, variance)
-    gam:
-        uses a GAM (spline on age) for the covariate effect, while
-        estimating site effects with gamma/delta.
     covbat:
         runs pairwise ComBat then aligns covariance structure in a shared
         principal component space (Chen et al., 2021).
     gam:
         uses a GAM (spline on age) for the covariate effect, while
-        estimating site effects with gamma/delta.
+        estimating site effects with gamma/delta. (Pomponio et al., 2020)
 
 NOTE: the harmonization parameters (regul, degree, nu, tau) are preset
       according to the harmonization method chosen. See default settings.
