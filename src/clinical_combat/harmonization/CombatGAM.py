@@ -401,13 +401,6 @@ class CombatGam(Combat):
         self.gamma_mov = np.array([np.mean(x) for x in z_mov], dtype=float)
         self.delta_mov = np.array([np.std(x, ddof=1) for x in z_mov], dtype=float)
 
-        if getattr(self, "robust", None) == "FLIP":
-            self.gamma_mov = np.array([np.median(x) for x in z_mov], dtype=float)
-            self.delta_mov = np.array(
-                [np.mean(x[x <= np.median(x)]) - np.median(x) for x in z_mov],
-                dtype=float
-            )
-
         if self.use_empirical_bayes:
             self.gamma_mov, self.delta_mov = Combat.emperical_bayes_estimate(
                 z_mov, self.gamma_mov, self.delta_mov ** 2
