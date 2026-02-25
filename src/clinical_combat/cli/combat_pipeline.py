@@ -20,6 +20,12 @@ Harmonization methods:
     gam:
         uses a GAM (spline on age) for the covariate effect, while
         estimating site effects with gamma/delta.
+    covbat:
+        runs pairwise ComBat then aligns covariance structure in a shared
+        principal component space (Chen et al., 2021).
+    gam:
+        uses a GAM (spline on age) for the covariate effect, while
+        estimating site effects with gamma/delta.
 
 NOTE: the harmonization parameters (regul, degree, nu, tau) are preset
       according to the harmonization method chosen. See default settings.
@@ -72,7 +78,7 @@ def _build_arg_parser():
 
     p.add_argument("-m", "--method",
                    default="clinical",
-                   choices=["pairwise", "clinical", "gam"],
+                   choices=["pairwise", "clinical", "gam", "covbat"],
                    help="Harmonization method.")
     p.add_argument("--ignore_sex",
                    action="store_true",
@@ -140,6 +146,14 @@ def _build_arg_parser():
                    type=float,
                    default=None,
                    help="Optional upper bound for GAM spline knots.")
+    p.add_argument("--covbat_pve",
+                   type=float,
+                   default=0.95,
+                   help="CovBat: cumulative variance threshold for PCs. [%(default)s]")
+    p.add_argument("--covbat_max_components",
+                   type=int,
+                   default=None,
+                   help="CovBat: optional maximum number of PCs to use.")
     p.add_argument("--bundles",
                    nargs="+",
                    help="List of bundle to use for figures. "
@@ -257,6 +271,10 @@ def main():
         cmd += " --smooth_lower " + str(args.smooth_lower)
     if args.smooth_upper is not None:
         cmd += " --smooth_upper " + str(args.smooth_upper)
+    if args.covbat_pve:
+        cmd += " --covbat_pve " + str(args.covbat_pve)
+    if args.covbat_max_components is not None:
+        cmd += " --covbat_max_components " + str(args.covbat_max_components)
     if args.ignore_sex:
         cmd += " --ignore_sex"
     if args.ignore_handedness:

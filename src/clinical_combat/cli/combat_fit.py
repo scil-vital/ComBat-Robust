@@ -12,6 +12,8 @@ Harmonization methods:
             (Beta_mov, variance)
     gam: fits the covariate effect with a generalized additive model (spline on age)
          while estimating site effects with gamma/delta as in ComBat-GAM.
+    covbat: runs pairwise ComBat then aligns covariance structure in a shared
+            principal component space (Chen et al., 2021).
 
 Examples:
 # Use the pairwise method to harmonize the moving site data to
@@ -57,7 +59,7 @@ def _build_arg_parser():
                         "['ref_site-moving-site.model.metric_name.method.model.csv']")
     p.add_argument("-m", "--method",
                    default="clinical",
-                   choices=["pairwise", "clinical", "gam"],
+                   choices=["pairwise", "clinical", "gam", "covbat"],
                    help="Harmonization method.")
     p.add_argument("--ignore_sex",
                    action="store_true",
@@ -125,6 +127,14 @@ def _build_arg_parser():
                    type=float,
                    default=None,
                    help="Optional upper bound for GAM spline knots.")
+    p.add_argument("--covbat_pve",
+                   type=float,
+                   default=0.95,
+                   help="CovBat: cumulative variance threshold for PCs. [%(default)s]")
+    p.add_argument("--covbat_max_components",
+                   type=int,
+                   default=None,
+                   help="CovBat: optional maximum number of PCs to use.")
     p.add_argument("--ignore_bundles",
                    nargs="+",
                    default=['left_ventricle', 'right_ventricle'],
@@ -145,13 +155,13 @@ def main():
         raise AssertionError("Robust is not implemented.")
     
     if args.regul_mov is None:
-        if args.method in ["pairwise", "gam"]:
+        if args.method in ["pairwise", "gam", "covbat"]:
             args.regul_mov = 0
         else:
             args.regul_mov = -1
 
     if args.degree is None:
-        if args.method in ["pairwise", "gam"]:
+        if args.method in ["pairwise", "gam", "covbat"]:
             args.degree = 1
         else:
             args.degree = 2
@@ -208,6 +218,8 @@ def main():
         regul_mov=args.regul_mov,
         nu=args.nu,
         tau=args.tau,
+        covbat_pve=args.covbat_pve,
+        covbat_max_components=args.covbat_max_components,
         smooth_terms=args.smooth_terms,
         smooth_term_bounds=(args.smooth_lower, args.smooth_upper),
         df_spline=args.df_spline,

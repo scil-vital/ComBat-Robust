@@ -4,6 +4,7 @@ from __future__ import absolute_import
 import ast
 
 from clinical_combat.harmonization.CombatClinical import CombatClinical
+from clinical_combat.harmonization.Covbat import CovBat
 from clinical_combat.harmonization.CombatGAM import CombatGam
 from clinical_combat.harmonization.CombatPairwise import CombatPairwise
 
@@ -20,6 +21,8 @@ def from_model_name(
     regul_mov=0,
     nu=0,
     tau=1,
+    covbat_pve=0.95,
+    covbat_max_components=None,
     smooth_terms=("age",),
     smooth_term_bounds=(None, None),
     df_spline=10,
@@ -60,6 +63,17 @@ def from_model_name(
             smooth_term_bounds=smooth_term_bounds,
             df_spline=df_spline,
             spline_degree=spline_degree,
+        )
+    elif name == "covbat":
+        QC = CovBat(
+            ignore_sex_covariate=ignore_sex_covariate,
+            ignore_handedness_covariate=ignore_handedness_covariate,
+            use_empirical_bayes=use_empirical_bayes,
+            limit_age_range=limit_age_range,
+            degree=degree,
+            regul=regul,
+            covbat_pve=covbat_pve,
+            covbat_max_components=covbat_max_components,
         )
     else:
         raise AssertionError(
