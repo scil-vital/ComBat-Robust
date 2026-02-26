@@ -1,0 +1,13 @@
+{
+  "in_features": 430,
+  "hidden_dims": [
+    448,
+    64,
+    128
+  ],
+  "activation": "relu",
+  "dropout": 0.5,
+  "batch_norm": true,
+  "lr": 0.001223532306429007,
+  "weight_decay": 0.0001
+}
