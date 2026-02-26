@@ -461,6 +461,8 @@ def score_mlp_from_model(df, run_name):
     scores: Series
         Score for each row of df.
     """
+    if not all(metric in ["ad", "adt", "afd", "fa", "fat", "fw", "md", "mdt", "rd", "rdt"] for metric in df["metric"].unique()):
+        raise ValueError("Invalid metrics. Must be exactly one of: ad, adt, afd, fa, fat, fw, md, mdt, rd, rdt")
     pred = predict_malades_MLP(df, run_name=run_name)  # columns: sid, prob_outlier
     return score_from_sid_table(df, pred)
 
