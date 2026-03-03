@@ -58,13 +58,6 @@ def _build_arg_parser():
         default=["ad", "adt", "afd", "fa", "fat", "fw", "md", "mdt", "rd", "rdt"],
         help="Metrics to process (e.g., ad, adt, afd, fa, fat, fw, md, mdt, rd, rdt).",
     )
-
-    p.add_argument(
-        "--score_col",
-        default=None,
-        help="Name of the output column. Default: OUT_{method}",
-    )
-
     add_verbose_arg(p)
 
     return p
@@ -86,7 +79,7 @@ def load_files(file_list: list, allowed_metrics: list):
         if not os.path.exists(path):
             raise FileNotFoundError(path)
 
-        df = pd.read_csv(path)
+        df = pd.read_csv(path, low_memory=False)
 
         if "metric" not in df.columns:
             raise ValueError(f"No 'metric' column in file: {path}")
@@ -144,7 +137,6 @@ def main():
     df = add_outlier_column(
         df,
         method=args.method,
-        score_col=args.score_col,
     )
 
     save_back(file_list, df)

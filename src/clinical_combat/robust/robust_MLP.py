@@ -1,11 +1,18 @@
 import json
 from pathlib import Path
-from typing import List, Optional, Sequence, Union
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from sklearn.metrics import f1_score, roc_auc_score
+from torch.utils.data import DataLoader, Dataset
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except Exception:  # pragma: no cover
+    SummaryWriter = None
 
 
 MODEL_DIR = Path("Pytorch_models")
@@ -197,7 +204,7 @@ class PatientMLP(nn.Module):
             drop_list = [float(d) for d in drop]
             if len(drop_list) != len(hidden_dims):
                 raise ValueError(
-                    "The 'drop' list must have the same length as 'hidden_dims'."
+                    "The 'drop' list must match the length of 'hidden_dims'."
                 )
 
         layers: List[nn.Module] = []
@@ -235,7 +242,7 @@ DEFAULT_MODEL_CONFIG = {
     "in_features": 430,
     "hidden_dims": [256, 128, 64],
     "activation": "relu",
-    "dropout": 0.3,
+    "dropout": 0.5,
     "batch_norm": True,
 }
 
@@ -264,3 +271,272 @@ def build_mlp_from_config(cfg=None):
         activation=merged.get("activation", "relu"),
         batch_norm=merged.get("batch_norm", True),
     )
+
+
+class PatientDataset(Dataset):
+    """
+    Torch Dataset wrapping patient feature matrices and binary labels.
+
+    X: array-like
+        Feature matrix with shape (n_samples, n_features).
+    y: array-like
+        Binary labels aligned with X rows.
+    """
+
+    def __init__(self, X, y):
+        self.X = torch.tensor(X, dtype=torch.float32)
+        self.y = torch.tensor(y, dtype=torch.float32)
+
+    def __len__(self):
+        """Return the number of samples."""
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        """Return the feature vector and label at index idx."""
+        return self.X[idx], self.y[idx]
+
+
+def make_loaders(
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    X_test,
+    y_test,
+    batch_size: int,
+) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    """
+    Build DataLoaders for train, validation, and test splits.
+
+    X_train, y_train: array-like
+        Training features and labels.
+    X_val, y_val: array-like
+        Validation features and labels.
+    X_test, y_test: array-like
+        Test features and labels.
+    batch_size: int
+        Batch size used for all DataLoaders.
+
+    Returns
+    -------
+    train_loader, val_loader, test_loader: DataLoader
+        Torch DataLoaders for each dataset split.
+    """
+    train = DataLoader(
+        PatientDataset(X_train, y_train),
+        batch_size=batch_size,
+        shuffle=True,
+    )
+    val = DataLoader(
+        PatientDataset(X_val, y_val),
+        batch_size=batch_size,
+    )
+    test = DataLoader(
+        PatientDataset(X_test, y_test),
+        batch_size=batch_size,
+    )
+    return train, val, test
+
+
+def train_epoch(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    crit: nn.Module,
+    opt: torch.optim.Optimizer,
+    device: str = "cpu",
+    neg_weight: float = 10.0,
+) -> float:
+    """
+    Run one training epoch with class-weighted BCE loss.
+
+    model: torch.nn.Module
+        Model to train.
+    loader: DataLoader
+        Training DataLoader.
+    crit: nn.Module
+        Loss function returning per-sample losses.
+    opt: torch.optim.Optimizer
+        Optimizer updating model parameters.
+    device: str
+        Device identifier, e.g., 'cpu' or 'cuda'.
+    neg_weight: float
+        Weight applied to negative class samples.
+
+    Returns
+    -------
+    mean_loss: float
+        Average loss over the training dataset.
+    """
+    model.train()
+    running = 0.0
+    for xb, yb in loader:
+        xb, yb = xb.to(device), yb.to(device).float()
+        opt.zero_grad()
+        logits = model(xb)
+        base_loss = crit(logits, yb)
+        weights = torch.where(yb == 0, float(neg_weight), 1.0)
+        loss = (base_loss * weights).mean()
+        loss.backward()
+        opt.step()
+        running += loss.item() * xb.size(0)
+    return running / len(loader.dataset)
+
+
+@torch.no_grad()
+def eval_epoch(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    crit: nn.Module,
+    device: str = "cpu",
+    neg_weight: float = 10.0,
+):
+    """
+    Evaluate the model on a dataset split.
+
+    model: torch.nn.Module
+        Model to evaluate.
+    loader: DataLoader
+        DataLoader for the evaluation split.
+    crit: nn.Module
+        Loss function returning per-sample losses.
+    device: str
+        Device identifier, e.g., 'cpu' or 'cuda'.
+    neg_weight: float
+        Weight applied to negative class samples.
+
+    Returns
+    -------
+    mean_loss: float
+        Average weighted loss over the dataset.
+    auc: float
+        ROC-AUC for the split; NaN if labels are single-class.
+    f1: float
+        F1 score at 0.5 threshold; NaN if labels are single-class.
+    probs: ndarray
+        Predicted probabilities for each sample.
+    labels: ndarray
+        Ground-truth labels for each sample.
+    """
+    model.eval()
+    losses, probs, labels = [], [], []
+    for xb, yb in loader:
+        xb, yb = xb.to(device), yb.float()
+        logits = model(xb)
+        base_loss = crit(logits, yb.to(device))
+        weights = torch.where(yb == 0, float(neg_weight), 1.0)
+        loss = (base_loss * weights).mean().item()
+        losses.append(loss * xb.size(0))
+        probs.append(torch.sigmoid(logits).cpu())
+        labels.append(yb)
+
+    probs = torch.cat(probs).numpy()
+    labels = torch.cat(labels).numpy()
+    if len(np.unique(labels)) > 1:
+        auc = roc_auc_score(labels, probs)
+        f1 = f1_score(labels, (probs > 0.5).astype(int))
+    else:
+        auc = float("nan")
+        f1 = float("nan")
+
+    return np.sum(losses) / len(loader.dataset), auc, f1, probs, labels
+
+
+def fit(
+    model: torch.nn.Module,
+    train_dl: DataLoader,
+    val_dl: DataLoader,
+    epochs: int = 100,
+    lr: float = 1e-3,
+    wd: float = 1e-4,
+    patience: int = 10,
+    device: str = "cpu",
+    neg_weight: float = 10.0,
+    run_name: Optional[str] = None,
+):
+    """
+    Train the model and keep the checkpoint with the best validation AUC.
+
+    model: torch.nn.Module
+        PatientMLP or compatible binary classifier.
+    train_dl: DataLoader
+        Training DataLoader.
+    val_dl: DataLoader
+        Validation DataLoader.
+    epochs: int
+        Maximum number of training epochs.
+    lr: float
+        Learning rate for the optimizer.
+    wd: float
+        Weight decay for the optimizer.
+    patience: int
+        Early stopping patience on validation AUC.
+    device: str
+        Device identifier, e.g., 'cpu' or 'cuda'.
+    neg_weight: float
+        Weight applied to negative class samples.
+    run_name: Optional[str]
+        Optional run name for TensorBoard logging.
+
+    Returns
+    -------
+    best_state: dict or None
+        State dict of the best epoch (None if no improvement was logged).
+    train_losses: list
+        Per-epoch training losses.
+    val_losses: list
+        Per-epoch validation losses.
+    best_auc: float
+        Best validation AUC achieved during training.
+    """
+    crit = nn.BCEWithLogitsLoss(reduction="none")
+    opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
+    sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        opt,
+        patience=5,
+        factor=0.5,
+    )
+
+    writer = None
+    if run_name and SummaryWriter is not None:
+        writer = SummaryWriter(f"{MODEL_DIR}/runs/{run_name}")
+
+    best_auc, best_state, counter = -1.0, None, 0
+    tr_losses, val_losses = [], []
+    for ep in range(1, epochs + 1):
+        tr_loss = train_epoch(
+            model,
+            train_dl,
+            crit,
+            opt,
+            device=device,
+            neg_weight=neg_weight,
+        )
+        val_loss, val_auc, _f1, _p, _l = eval_epoch(
+            model,
+            val_dl,
+            crit,
+            device=device,
+            neg_weight=neg_weight,
+        )
+        tr_losses.append(tr_loss)
+        val_losses.append(val_loss)
+        sched.step(val_loss)
+
+        if writer is not None:
+            writer.add_scalar("Loss/train", tr_loss, ep)
+            writer.add_scalar("Loss/val", val_loss, ep)
+            if not np.isnan(val_auc):
+                writer.add_scalar("AUC/val", val_auc, ep)
+
+        if not np.isnan(val_auc) and val_auc > best_auc + 1e-4:
+            best_auc = val_auc
+            best_state = model.state_dict()
+            counter = 0
+        else:
+            counter += 1
+            if counter >= patience:
+                break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    return best_state, tr_losses, val_losses, best_auc

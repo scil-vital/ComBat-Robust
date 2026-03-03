@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from clinical_combat.robust.robust_utils import remove_covariates_effects_metrics
-from clinical_combat.robust.robust_MLP import predict_malades_MLP
+from clinical_combat.robust.robust_MLP import predict_outliers_mlp
 
 METRICS_HIGH = {"md", "mdt", "rd", "rdt", "fw", "ad", "adt"}  # pathology ↑
 METRICS_LOW = {"fa", "fat", "afd"}  # pathology ↓
@@ -463,7 +463,7 @@ def score_mlp_from_model(df, run_name):
     """
     if not all(metric in ["ad", "adt", "afd", "fa", "fat", "fw", "md", "mdt", "rd", "rdt"] for metric in df["metric"].unique()):
         raise ValueError("Invalid metrics. Must be exactly one of: ad, adt, afd, fa, fat, fw, md, mdt, rd, rdt")
-    pred = predict_malades_MLP(df, run_name=run_name)  # columns: sid, prob_outlier
+    pred = predict_outliers_mlp(df, run_name=run_name)  # columns: sid, prob_outlier
     return score_from_sid_table(df, pred)
 
 
@@ -502,7 +502,6 @@ def score_mms_flag(data):
 
 
 SCORE_METHODS = {
-    "IQR": lambda d: score_iqr_value_only(d),
     "ZS": lambda d: score_zscore_bundle(d),
     "MAD": lambda d: score_mad_bundle(d),
     "SN": lambda d: score_sn(d),
@@ -529,7 +528,7 @@ def get_scorer(method):
     if method in SCORE_METHODS:
         return SCORE_METHODS[method]
     if method.upper().startswith("MLP"):
-        return lambda d, t: score_mlp_from_model(d, run_name=method)
+        return lambda d: score_mlp_from_model(d, run_name=method)
 
     supported = sorted(SCORE_METHODS.keys())
     raise ValueError(
@@ -537,7 +536,7 @@ def get_scorer(method):
     )
 
 
-def add_outlier_column(df, method, by_bundle=True):
+def add_outlier_column(df, method):
     """
     Add an outlier score/flag column to df.
 
@@ -549,11 +548,6 @@ def add_outlier_column(df, method, by_bundle=True):
         One of SCORE_METHODS keys, or any name starting with 'MLP'.
     threshold: float
         Optional parameter used by some methods (mainly MMS).
-    score_col: str
-        Name of the created score column. Default is `method`.
-    by_bundle: bool
-        If True, compute per metric_bundle for bundle-level methods.
-        Forced to False for global methods (G_ZS, G_MAD, MLP*).
 
     Returns
     -------
@@ -561,8 +555,8 @@ def add_outlier_column(df, method, by_bundle=True):
         Copy of df with the score column added.
         Drops 'mean_no_cov' and 'metric_bundle' before returning.
     """
-    if method == "IQR":
-        print("IQR outliers are removed directly during fit(); no additional filtering step will be applied.")
+    if method in {"IQR", "HC", "NO"}:
+        print(f"{method} outliers are removed directly during fit(); no additional filtering step will be applied.")
         return df
     scorer = get_scorer(method)
 
@@ -581,23 +575,20 @@ def add_outlier_column(df, method, by_bundle=True):
         out[col_name] = scorer(out).astype(float)
         return out.drop(columns=["mean_no_cov", "metric_bundle"], errors="ignore")
 
-    if by_bundle and "bundle" in out.columns:
+    else:
         out[col_name] = 0.0
         for _, sub in out.groupby("metric_bundle", sort=False):
             out.loc[sub.index, col_name] = scorer(sub).astype(float)
         return out.drop(columns=["mean_no_cov", "metric_bundle"], errors="ignore")
 
-    out[col_name] = scorer(out).astype(float)
-    return out.drop(columns=["mean_no_cov", "metric_bundle"], errors="ignore")
-
 
 def filter_outliers_by_threshold(df, method, threshold):
     """
-    Return indices where df[score_col] >= threshold.
+    Return indices where df[method] >= threshold.
 
     df: DataFrame
-        Input DataFrame containing the score_col.
-    score_col: str
+        Input DataFrame containing the method.
+    method: str
         Name of the score column.
     threshold: float
         Threshold applied to the score column.
@@ -607,16 +598,16 @@ def filter_outliers_by_threshold(df, method, threshold):
     outliers_idx: list
         List of DataFrame indices where score >= threshold.
     """
-    if threshold is None:
-        threshold = DEFAULT_THRESHOLDS["MLP"] if method.startswith("MLP") else DEFAULT_THRESHOLDS[method]
-
     if method == "NO":
         return df
     if method == "HC":
         return df[df["disease"] == "HC"]
-    if method not in df.columns:
-        raise KeyError(f"Missing column: {method}")  
-    if method == "IQR":
-        return remove_outliers_iqr(df, k=threshold)
     
+    if threshold is None:
+        threshold = DEFAULT_THRESHOLDS["MLP"] if method.startswith("MLP") else DEFAULT_THRESHOLDS[method]
+    if method == "IQR":
+        df = remove_covariates_effects_metrics(df)
+        return remove_outliers_iqr(df, k=threshold)
+    if method not in df.columns:
+        raise KeyError(f"Missing column: {method}")
     return df[pd.to_numeric(df[method], errors="coerce").fillna(0.0) < threshold]
