@@ -34,6 +34,7 @@ import os
 import numpy as np
 import pandas as pd
 
+from clinical_combat.robust.robust import add_outlier_column, filter_outliers_by_threshold, DEFAULT_THRESHOLDS
 from clinical_combat.harmonization import from_model_name
 from clinical_combat.utils.scilpy_utils import (
     add_overwrite_arg,
@@ -76,9 +77,15 @@ def _build_arg_parser():
                    help="If set, skip empirical Bayes estimator"
                         " for alpha and sigma estimation.")
     p.add_argument("--robust",
-                   action="store_true",
-                   help="If set, use combat robust. This tries "
-                        "identifying/rejecting non-HC subjects.")
+                   default="HC",
+                   help="Robust outlier method applied to the moving site before fitting "
+                        "(e.g., MAD, IQR, VS, MLP2_ALL, HC). Use 'NO' to disable. "
+                        "[%(default)s]")
+    p.add_argument("--robust_threshold",
+                   type=float,
+                   default=None,
+                   help="Override the robust filtering threshold. "
+                        "If omitted, method defaults are used.")
     p.add_argument("--regul_ref",
                    type=float,
                    default=0,
@@ -150,9 +157,6 @@ def main():
     args = parser.parse_args()
 
     logging.getLogger().setLevel(logging.getLevelName(args.verbose))
-
-    if args.robust:
-        raise AssertionError("Robust is not implemented.")
     
     if args.regul_mov is None:
         if args.method in ["pairwise", "gam", "covbat"]:
@@ -188,6 +192,20 @@ def main():
         raise AssertionError("The moving data contains more than one site.")
     if np.unique(ref_data["metric"]) != np.unique(mov_data["metric"]):
         raise AssertionError("Data file have different metrics.")
+
+    robust_method = str(args.robust).upper() if args.robust else "NO"
+    if robust_method != "NO":
+        logging.info(
+            "Applying robust filtering with method=%s and threshold=%s",
+            robust_method,
+            args.robust_threshold if args.robust_threshold is not None else "default",
+        )
+        mov_data = filter_outliers_by_threshold(
+            mov_data, robust_method, args.robust_threshold)
+
+    cols = list(DEFAULT_THRESHOLDS.keys())
+    cols_to_drop = [c for c in cols if c in mov_data.columns]
+    mov_data =  mov_data.drop(columns=cols_to_drop)
 
     if args.output_model_filename == "":
         output_filename = os.path.join(

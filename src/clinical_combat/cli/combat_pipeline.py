@@ -93,9 +93,15 @@ def _build_arg_parser():
                    help="If set, skip empirical Bayes estimator for "
                         "alpha and sigma estimation.")
     p.add_argument("--robust",
-                   action="store_true",
-                   help="If set, use combat robust. This tries "
-                        "identifying/rejecting non-HC subjects.")
+                   default="HC",
+                   help="Robust outlier method applied to the moving site before fitting "
+                        "(e.g., MAD, IQR, VS, MLP2_ALL, HC). Use 'NO' to disable. "
+                        "[%(default)s]")
+    p.add_argument("--robust_threshold",
+                   type=float,
+                   default=None,
+                   help="Override the robust filtering threshold. "
+                        "If omitted, method defaults are used.")
     p.add_argument("--regul_ref",
                    type=float,
                    default=0,
@@ -280,8 +286,10 @@ def main():
         cmd += " --limit_age_range"
     if args.no_empirical_bayes:
         cmd += " --no_empirical_bayes"
-    if args.robust:
-        cmd += " --robust"
+    if args.robust is not None:
+        cmd += " --robust " + str(args.robust)
+    if args.robust_threshold is not None:
+        cmd += " --robust_threshold " + str(args.robust_threshold)
     if args.overwrite:
         cmd += " -f"
     logging.info(cmd)

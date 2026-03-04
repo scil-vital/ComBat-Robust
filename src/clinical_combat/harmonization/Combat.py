@@ -82,8 +82,6 @@ class Combat(HarmonizationMethod):
             max_age = np.max(mov_data["age"])
             ref_data = ref_data.query("age >= @min_age & age <= @max_age")
 
-        mov_data = mov_data.query("disease == 'HC'")
-
         self.bundle_names = np.intersect1d(
             ref_data.bundle.unique(), mov_data.bundle.unique()
         )

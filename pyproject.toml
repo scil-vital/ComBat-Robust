@@ -3,8 +3,12 @@ requires = [
     "numpy>=1.23.2",
     "pandas==2.2.1",
     "matplotlib==3.10.*",
+    "joblib>=1.3,<2",
+    "scikit-learn==1.5.*",
+    "optuna==3.6.*",
     "nibabel==5.3.*",
     "statsmodels==0.14.4",
+    "torch>=2.2,<3",
     "seaborn==0.13.2",
     "setuptools==75.1.0"]
 build-backend = "setuptools.build_meta"
@@ -38,9 +42,13 @@ dependencies = [
     "numpy>=1.23.2",
     "pandas==2.2.1",
     "matplotlib==3.10.*",
+    "joblib>=1.3,<2",
+    "scikit-learn==1.5.*",
+    "optuna==3.6.*",
     "seaborn==0.13.2",
     "nibabel==5.3.*",
     "statsmodels==0.14.4",
+    "torch>=2.2,<3",
     "setuptools==75.1.0"]
 
 [project.optional-dependencies]
@@ -62,6 +70,7 @@ dev = [
 combat_corrupt_data  = "clinical_combat.cli.combat_corrupt_data:main"
 combat_info  = "clinical_combat.cli.combat_info:main"
 combat_apply  = "clinical_combat.cli.combat_apply:main"
+combat_robust = "clinical_combat.cli.combat_robust:main"
 combat_fit  = "clinical_combat.cli.combat_fit:main"
 combat_QC  = "clinical_combat.cli.combat_QC:main"
 combat_pipeline  = "clinical_combat.cli.combat_pipeline:main"
