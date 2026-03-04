@@ -68,7 +68,7 @@ sid,site,bundle,metric,mean,age,sex,handedness,disease
 
 Complete examples (`CamCAN.md.raw.csv.gz` and `ModifiedCamCAN.md.raw.csv.gz`) are available in `src/clinical_combat/data/`. Paper data can be retrieved on Zenodo (DOI to be published).
 
-## Quick test
+## Quick example
 
 ### Step 1: Compute outlier scores (Robust ComBat)
 
