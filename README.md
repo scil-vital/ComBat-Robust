@@ -1,16 +1,17 @@
-# Clinical-ComBAT
+# ComBat-Robust
 
-Reference package for ComBAT harmonization of clinical MRI data. It ships the ComBAT implementations for adapting clinical sites to a reference site along with ready-to-run scripts to prepare datasets, fit a model, apply the harmonization and analyze the outputs. While Clinical-ComBAT was designed and tested for the harmonization of diffusion MRI metrics (like fractional anisotropy, mean diffusivity, apparent fiber density) it can also be used on other type of data like volumetric data.
+This repository implements **Robust ComBat**, a method designed to detect and remove outliers prior to harmonization. The goal is to improve the robustness of ComBat-based harmonization when datasets contain pathological or anomalous samples that could bias parameter estimation.
+
+This repository is a fork of [Clinical-ComBAT](https://github.com/scil-vital/clinical-ComBAT). All detailed documentation for harmonization, quality control, and visualization is available there; this README remains intentionally short and focuses on the robust ComBat variant. Data used in the paper will be available on  [Zenodo](https://doi.org/10.5281/zenodo.18802256) and will match the dataset used in our experiments.
 
 ## References
 
-- Girard, G., Edde, M., Dumais, F., et al. (2025). *Clinical-ComBAT: a diffusion MRI harmonization method for clinical normative modeling applications*.  Submitted to Medical Image Analysis.
-- Jodoin, P.-M., Edde, M., Girard, G., et al. (2025). Challenges and best practices when using ComBAT to harmonize diffusion MRI data.
-*Nature Scientific Reports*, 15, 41508.
-https://www.nature.com/articles/s41598-025-25400-x
+- ComBat-Robust reference: forthcoming.
+- Girard, G., Edde, M., Dumais, F., et al. (2025). *Clinical-ComBAT: a diffusion MRI harmonization method for clinical normative modeling applications*. Submitted to Medical Image Analysis.
+- Jodoin, P.-M., Edde, M., Girard, G., et al. (2025). Challenges and best practices when using ComBAT to harmonize diffusion MRI data. *Nature Scientific Reports*, 15, 41508. https://www.nature.com/articles/s41598-025-25400-x
 - Fortin, J.-P., Parker, D., Tun¸c, B., et al. (2017). Harmonization of multi-site diffusion tensor imaging data. *NeuroImage*, 161, 149–170. https://doi.org/10.1016/j.neuroimage.2017.08.047
 
-## Licence
+## License
 
 Shield: [![CC BY-NC-SA 4.0][cc-by-nc-sa-shield]][cc-by-nc-sa]
 
@@ -23,22 +24,20 @@ This work is licensed under a
 [cc-by-nc-sa-image]: https://licensebuttons.net/l/by-nc-sa/4.0/88x31.png
 [cc-by-nc-sa-shield]: https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg
 
-You can copy, redistribute, and adapt this work, but only for **non-commercial purposes**. You must give the original creator credit (Attribution), and if you adapt the work, your new version must be shared under the same or a compatible license (ShareAlike). The work cannot be used for commercial gain, meaning for activities primarily intended to generate money.  In such case, please contact [Pierre-Marc Jodoin](mailto:pierre-marc.jodoin@usherbrooke.ca).
+You can copy, redistribute, and adapt this work, but only for **non-commercial purposes**. You must give the original creator credit (Attribution), and if you adapt the work, your new version must be shared under the same or a compatible license (ShareAlike). The work cannot be used for commercial gain, meaning for activities primarily intended to generate money. In such case, please contact [Pierre-Marc Jodoin](mailto:pierre-marc.jodoin@usherbrooke.ca).
 
 ## Quick installation
 
+:warning: We recommend installing uv to speed up the install: https://docs.astral.sh/uv/getting-started/installation/
 
-:warning: We highly suggest to install uv to speedup clinical_combat installation: https://docs.astral.sh/uv/getting-started/installation/
+:point_up: If you do not want to use uv, simply remove `uv` from the commands below.
 
-:point_up: BUT, if you don't want to use uv, clinical_combat can still be installed by omitting the uv from all the installation command lines below.
-
-Make sure your pip is up-to-date before trying to install:
-```
+Update `pip`:
+```bash
 uv pip install --upgrade pip
 ```
 
-Then
-
+Then:
 ```bash
 # 1) create a Python >= 3.9 environment
 python -m venv .venv
@@ -48,98 +47,127 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
-The toolbox mainly depends on `numpy`, `pandas`, `matplotlib`, and `seaborn`.
-All scripts accept compressed or uncompressed CSV files.
-
-## Project layout
-
-| Folder / file | Description |
-| --- | --- |
-| `src/` | Python package (harmonization, utilities, visualization). |
-| `src/clinical_combat/cli/` | Production-ready scripts to fit, apply, and visualize ComBAT. |
-| `src/clinical_combat/cli/tests/` | Automated checks (for example `pytest scripts/tests/test_combat_pipeline.py`). |
-| `src/clinical_combat/cli_dev/` | Research helpers and additional plotting utilities (optional for end-users). |
-| `src/clinical_combat/data/` | Example datasets and sample figures. |
-| `pyproject.toml` | Package configuration file. |
+Main dependencies: `numpy`, `pandas`, `matplotlib`, `seaborn`. Scripts accept compressed or uncompressed CSV files.
 
 ## Expected data format
 
-Scripts expect CSV files containing at least the columns below:
+CSV files must contain at least the columns below:
 
 ```
 sid,site,bundle,metric,mean,age,sex,handedness,disease
 ```
 
 - `sid`: subject identifier
-- `site`: site name (string)
+- `site`: site name
 - `bundle`: bundle or region name
-- `metric`: diffusion metric (for example `md`, `fa`)
+- `metric`: diffusion metric (e.g., `md`, `fa`)
 - `mean`: numeric value per bundle (mean, median, etc.)
 - `age`, `sex`, `handedness`: covariates
-  - use integer values (1 or 2) for `sex` and `handedness`; when a covariate is unknown, add the column filled with `1`and the scripts will disable that effect automatically
-- `disease` acts as a flag; any row whose value is not `HC` is dropped before fitting the model
+  - use integer values (1 or 2) for `sex` and `handedness`; if unknown, fill with `1` and the scripts will disable that effect
+- `disease`: flag; any row whose value is not `HC` is dropped before model fitting if the HC robust method is used
 
-`src/clinical_combat/data/` contains fully fledged examples (`CamCAN.md.raw.csv.gz` and
-`ModifiedCamCAN.md.raw.csv.gz`) illustrating the column layout
-distribution.
+Complete examples (`CamCAN.md.raw.csv.gz` and `ModifiedCamCAN.md.raw.csv.gz`) are available in `src/clinical_combat/data/`. Paper data can be retrieved on Zenodo (DOI to be published).
 
-## Choosing a ComBAT variant
-The code supports two harmonization modes, namely clinical and pairwise. In both cases, the procedure harmonizes data from a moving site onto a reference site.
-| Method | Description |
-| --- | --- |
-| `clinical` (default) | Harmonizes a moving site to a normative reference following the Clinical-ComBAT method (Girard et al., 2025). It fits site-specific polynomial covariate models, anchors variance with Bayesian priors suited to small cohorts, and auto-tunes the hyperparameters to keep the harmonized metrics consistent with the reference population. |
-| `pairwise` | Adaptation of the original ComBAT (Fortin et al., 2017) that still fits both sites together but explicitly anchors the harmonization to a chosen reference site. For more details, see Jodoin et al. (2025), *ComBAT Harmonization for Diffusion MRI: Challenges and Best Practices* (Nature Scientific Reports:41508). |
+## Quick test
 
-Common options for both methods:
-- age filtering (`--limit_age_range`)
-- covariate selection (`--ignore_sex`, `--ignore_handedness`)
-- age effect polynomial order (`--degree`)
+### Step 1: Compute outlier scores (Robust ComBat)
 
-## Easy start
-
-Run the bundled example once to check your setup:
-
+First, run the `combat_robust` script with the outlier method of your choice (here, `MLP_TEST`):
 ```bash
-# From the project root
-combat_pipeline \
-    src/clinical_combat/data/CamCAN.md.raw.csv.gz \
-    src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
-    --method clinical \
-    --out_dir quickstart_demo/
+combat_robust \
+    src/clinical_combat/data/70_pct_example_*.csv \
+    --method MLP_TEST
 ```
+This adds an `MLP_TEST` outlier score column to each file. You can then filter observations based on this score before harmonization.
 
-This produces:
-- a fitted model (`quickstart_demo/ModifiedCamCAN-CamCAN.md.clinical.model.csv`)
-- harmonized data (`quickstart_demo/ModifiedCamCAN.md.clinical.csv.gz`)
-- QC metrics and figures inside `quickstart_demo/`
+### Step 2: Run the standard ComBat pipeline
 
+Then run the `combat_pipeline` script to harmonize the data using the outlier method defined above:
+```bash
+combat_pipeline \
+    src/clinical_combat/data/CamCAN.rd.raw.csv.gz \
+    src/clinical_combat/data/70_pct_example_rd.csv \
+    --method pairwise \
+    --robust MLP_TEST \
+    --out_dir quicktest_demo_MLP/ \
+    --bundle "mni_ICP_R"
+```
+In a single command, the pipeline chains fit → apply → QC → figures. Main outputs include the model, the harmonized data, and QC metrics/figures inside `quickstart_demo_MLP/`.
+
+### Comparison without filtering
+
+You can compare these results with the standard pipeline without outlier filtering:
+```bash
+combat_pipeline \
+    src/clinical_combat/data/CamCAN.rd.raw.csv.gz \
+    src/clinical_combat/data/70_pct_example_rd.csv \
+    --method pairwise \
+    --robust NO \
+    --out_dir quicktest_demo_NO/ \
+    --bundle "mni_ICP_R"
+```
 ## Main scripts
 
-### Combined workflow
+### Robust outlier scoring (`combat_robust`)
 
-`combat_pipeline` runs the full pipeline in sequence (fit → apply → QC → figures) and logs
-each spawned command.
+`combat_robust` applies the selected outlier detection method to the provided CSV files, computes an outlier score for each row, and appends these columns to the files before harmonization. All files must be from the same site. The files are saved back with the same name, and no rows are dropped at this stage. Actual filtering is performed later in the pipeline script, where you specify the robust method and optionally the associated threshold.
+
+- `data` *(required, one or more from the same site)*: CSV paths or glob patterns (`*`) to process.
+- `--method` (default `HC`): outlier detection method.
+  - Statistical methods: `ZS`, `MAD`, `IQR`, `SN`, `QN`, `VS`, `MMS`, `G_ZS`, `G_MAD`.
+  - `MLP*`: neural network–based outlier detection.
+    - `MLP_TEST`: uses the pre-trained model provided in this repository.
+    - `MLP_<model_name>`: uses a custom trained MLP model.
+  - `HC`: uses only Healthy Controls (ideal scenario).
+  - `NO`: no outlier filtering, all subjects are used as-is.
+- `--metrics` (default `ad adt afd fa fat fw md mdt rd rdt`): allowed metrics; files containing others are rejected.
+- `--verbose/-v` (default `WARNING`; `INFO` with `-v`): logging level.
+- Writes back to the same files, adding a column named after `--method` with the score/flag.
+
+Example:
+```bash
+combat_robust \
+     src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
+    --method MAD
+```
+
+### Combined workflow (`combat_pipeline`)
+
+`combat_pipeline` runs fit → apply → QC → figures and logs each spawned command.
 
 - `ref_data` *(required)*: reference-site CSV (`*.raw.csv[.gz]`).
 - `mov_data` *(required)*: moving-site CSV to harmonize.
-- `--method {clinical,pairwise}` (default `clinical`): harmonization strategy.
-- `--degree` (default 2 for clinical, 1 for pairwise when omitted): polynomial degree for age.
-- `--limit_age_range` (default disabled): drop reference subjects outside the moving age range.
-- `--ignore_sex` (default disabled): remove sex from the covariate model.
-- `--ignore_handedness` (default disabled): remove handedness from the model.
-- `--no_empirical_bayes` (default disabled): skip empirical Bayes estimation.
-- `--robust` (default disabled, not implemented): placeholder for robust mode.
-- `--regul_ref` *(clinical only, default 0)*: ridge penalty applied to reference regression.
-- `--regul_mov` *(clinical only, default -1; pairwise falls back to 0)*: moving-site penalty or auto-tuning.
-- `--nu` *(clinical only, default 5)*: variance hyperparameter for the moving site.
-- `--tau` *(clinical only, default 2)*: covariate hyperparameter for the moving site.
-- `--bundles` (default `mni_IIT_mask_skeletonFA` in plots): bundle subset for figures (`all` for every bundle).
-- `--degree_qc` (default 0): QC model degree override (0 reuses the harmonization degree).
-- `--out_dir` (default `./`): root directory for models, results, and figures.
-- `--output_model_filename` (default auto-generated): custom name for the saved model.
-- `--output_results_filename` (default auto-generated): custom name for the harmonized CSV.
-- `--verbose/-v` (default `WARNING`): logging verbosity (`INFO` with `-v`, `DEBUG` with `-v DEBUG`).
-- `--overwrite/-f` (default disabled): allow overwriting existing files.
+- `--out_dir` (default `./`): root directory for models, harmonized data, QC, and figures.
+- `--output_model_filename` (default auto): custom model filename.
+- `--output_results_filename` (default auto): custom harmonized CSV filename.
+- `--save_curves_json` (default false): also export regression curves/percentiles as JSON.
+- `--method {clinical,pairwise,gam,covbat}` (default `clinical`): harmonization strategy.
+- `--ignore_sex`, `--ignore_handedness` (default false): drop these covariates.
+- `--limit_age_range` (default false): restrict reference subjects to the moving-site age span.
+- `--no_empirical_bayes` (default false): skip empirical Bayes estimates.
+- `--robust` (default `HC`): outlier filtering on moving data before fit (MAD, IQR, VS, MLP2_ALL, HC, NO).
+- `--robust_threshold` (default method-specific): override the robust filtering threshold.
+- `--regul_ref` (default 0): ridge penalty on the reference regression.
+- `--regul_mov` (default -1 for clinical, 0 for pairwise): moving-site penalty or auto-tuning.
+- `--degree` (default 2 clinical, 1 pairwise): polynomial degree for age.
+- `--nu` (default 5, clinical): variance hyperparameter for the moving site.
+- `--tau` (default 2, clinical): covariate hyperparameter for the moving site.
+- `--smooth_terms` (default `age`, GAM only): covariates to smooth; use `none` to disable.
+- `--df_spline` (default 10): number of spline basis functions for each GAM term.
+- `--spline_degree` (default 3): B-spline degree for GAM.
+- `--smooth_lower/--smooth_upper` (default None): optional GAM knot bounds.
+- `--covbat_pve` (default 0.95): CovBat cumulative variance threshold for retained PCs.
+- `--covbat_max_components` (default None): maximum PCs to use in CovBat.
+- `--bundles` (default first skeleton bundle): bundles to plot (`all` for every bundle).
+- `--degree_qc` (default 0): QC model degree (0 reuses harmonization degree).
+- `--verbose/-v` (default `WARNING`; `INFO` with `-v`): logging verbosity.
+- `--overwrite/-f` (default false): allow overwriting existing files.
+
+Sequence:
+1. Fits the model with `combat_fit` (applying robust filtering if set) and saves `*.model.csv`.
+2. Applies it with `combat_apply` to produce harmonized `*.harmonized.csv[.gz]`.
+3. Generates figures with `combat_visualize_model` and `combat_visualize_harmonization` (optionally also JSON curves).
+4. Runs `combat_QC` on raw and harmonized data to report distances/QC metrics.
 
 Example:
 
@@ -147,199 +175,20 @@ Example:
 combat_pipeline src/clinical_combat/data/CamCAN.md.raw.csv.gz \
     src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
     --method clinical \
-    --out_dir results/clinical_pipeline/
+    --out_dir results/clinical_pipeline/ \
+    --robust MAD \
+    --bundles all \
+    -v INFO
 ```
 
-### Model fitting
+## Notebooks
 
-`combat_fit` estimates harmonization parameters and writes a `*.model.csv`.
+The notebooks below allow you to rerun most of the experiments reported in the paper by executing them sequentially:
 
-- `ref_data` *(required)*: reference-site CSV.
-- `mov_data` *(required)*: moving-site CSV.
-- `--method {clinical,pairwise}` (default `clinical`): harmonization variant.
-- `--degree` (default 2 for clinical, 1 for pairwise when omitted): polynomial age order.
-- `--limit_age_range` (default disabled): match reference ages to the moving-site range.
-- `--ignore_sex` (default disabled): drop sex from the design matrix.
-- `--ignore_handedness` (default disabled): drop handedness from the design matrix.
-- `--no_empirical_bayes` (default disabled): rely on classical estimates for alpha/sigma.
-- `--ignore_bundles` (default `left_ventricle right_ventricle`): bundles removed prior to fitting.
-- `--regul_ref` *(clinical only, default 0)*: ridge penalty on the reference regression.
-- `--regul_mov` *(clinical only, default -1; pairwise falls back to 0)*: moving-site penalty or auto-tuning.
-- `--nu` *(clinical only, default 5)*: variance hyperparameter for the moving site.
-- `--tau` *(clinical only, default 2)*: covariate hyperparameter for the moving site.
-- `--out_dir` (default `./`): directory for the generated model.
-- `--output_model_filename` (default auto-generated): custom model filename.
-- `--verbose/-v` (default `WARNING`): logging verbosity.
-- `--overwrite/-f` (default disabled): authorize overwriting existing files.
-
-Example:
-
-```bash
-combat_fit src/clinical_combat/data/CamCAN.md.raw.csv.gz \
-    src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
-    --method pairwise \
-    --out_dir models/pairwise/
-```
-
-### Model application
-
-`combat_apply` consumes a moving-site CSV and a saved `*.model.csv`, then produces
-harmonized measurements (`site.metric.method.csv.gz` by default).
-
-- `mov_data` *(required)*: moving-site CSV to transform.
-- `model` *(required)*: harmonization model generated by `combat_fit` or `combat_pipeline`.
-- `--out_dir` (default `./`): directory for the harmonized output.
-- `--output_results_filename` (default auto-generated): custom output filename.
-- `--verbose/-v` (default `WARNING`): logging level.
-- `--overwrite/-f` (default disabled): allow overwriting.
-
-Example:
-
-```bash
-combat_apply src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
-    models/pairwise/ModifiedCamCAN-CamCAN.md.pairwise.model.csv \
-    --out_dir harmonized/pairwise/
-```
-
-### Evaluation and quality control (QC) to assess the alignment of the harmonized population.
-
-- `combat_QC`: reports Bhattacharyya distances between reference and moving datasets.
-  - `ref_data` *(required)*: reference-site CSV (HC subjects only are used).
-  - `mov_data` *(required)*: moving-site CSV.
-  - `model` *(required)*: harmonization model (`*.model.csv`).
-  - `--degree_qc` (default 0): QC polynomial degree (0 reuses the model degree).
-  - `--ignore_bundles` (default `left_ventricle right_ventricle`): bundles to drop.
-  - `--print_only` (default disabled): skip writing the distance file.
-  - `--out_dir` (default `./`): directory for QC outputs.
-  - `--output_results_filename` (default auto-generated): custom QC filename.
-  - `--verbose/-v` (default `WARNING`), `--overwrite/-f` (default disabled).
-  - Example:
-    ```bash
-    combat_QC src/clinical_combat/data/CamCAN.md.raw.csv.gz \
-        src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
-        models/pairwise/ModifiedCamCAN-CamCAN.md.pairwise.model.csv \
-        --out_dir qc_reports/
-    ```
-
-### Visualization
-
-Common helper flags: each script accepts `-v/--verbose` (default `WARNING`) and `-f/--overwrite`
-(default disabled).
-
-- `combat_visualize_data`: scatterplots for raw or harmonized datasets.
-  - `in_files` *(required, one or more)*: CSV files to display (reference first for legend clarity).
-  - `--bundles` (default `mni_IIT_mask_skeletonFA`; use `all` for everything): bundles drawn.
-  - `--display_marginal_hist` (default disabled): add marginal histograms.
-  - `--hide_disease` (default disabled): remove non-HC subjects.
-  - `--out_dir` (default `./`), `--outname` (default none), `--add_suffix` (default none): figure export controls.
-  - `--fixed_ylim` (default auto): clamp Y axis to provided `[min max]`.
-  - `--xlim` (default `20 90`): X-axis age range.
-  - `--no_background` (default disabled): export without background styling.
-  - Example:
-    ```bash
-    combat_visualize_data src/clinical_combat/data/CamCAN.md.raw.csv.gz \
-        src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
-        harmonized/pairwise/ModifiedCamCAN.md.pairwise.harmonized.csv.gz \
-        --bundles mni_AF_L mni_AF_R \
-        --out_dir figures/data/
-    ```
-
-- `combat_visualize_model`: overlays regression models with data.
-  - `in_reference` *(required)*: reference raw CSV.
-  - `in_moving` *(required)*: moving raw CSV.
-  - `in_model` *(required)*: harmonization model CSV.
-  - `--bundles` (default `mni_IIT_mask_skeletonFA`; `all` for everything).
-  - `--hide_disease` (default disabled): remove non-HC rows.
-  - `--display_marginal_hist` (default disabled): add marginal histograms.
-  - `--out_dir` (default `./`), `--outname` (default none), `--add_suffix` (default none).
-  - `--fixed_color` (default palette-driven): manually set reference/moving colors.
-  - `--lightness` (default 1.0): scale palette brightness.
-  - `--only_models` (default disabled): hide scatter data and show regression lines only.
-  - `--line_width` (default 2.5): width of regression lines.
-  - `--fixed_ylim` (default auto) and `--xlim` (default `20 90`): axis limits.
-  - `--no_background` (default disabled): export without background styling.
-  - Example:
-    ```bash
-    combat_visualize_model src/clinical_combat/data/CamCAN.md.raw.csv.gz \
-        src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
-        models/pairwise/ModifiedCamCAN-CamCAN.md.pairwise.model.csv \
-        --out_dir figures/model/ \
-        --only_models
-    ```
-
-- `combat_visualize_harmonization`: age curves before/after harmonization.
-  - `in_reference` *(required)*: reference raw CSV.
-  - `in_movings` *(required, two or more)*: moving raw CSV plus harmonized CSV (order matters).
-  - `--out_dir` (default `./`), `--outname` (default none), `--add_suffix` (default none).
-  - `--bundles` (default `mni_IIT_mask_skeletonFA`; `all` allowed), `--ages` (default `20 90`).
-  - `--sexes`, `--handednesses`, `--diseases` (default all values present): cohort filters.
-  - `--hide_disease` (default disabled): remove disease rows entirely.
-  - `--display_point` (default disabled): scatter representation for moving site.
-  - `--display_marginal_hist` (default disabled): add marginal histograms.
-  - `--hide_percentiles` (default disabled): swap percentile bands for SD bands.
-  - `--window_size` (default 20), `--window_count` (default 10), `--no_dynamic_window` (default disabled): sliding window controls.
-  - `--min_subject_per_site` (default 10): minimum subjects per site retained.
-  - `--randomize_line` (default disabled) or `--line_style` (default dashed): adjust moving-line style.
-  - `--increase_ylim` (default 5): percentage padding on the Y axis when not fixed.
-  - `--fixed_ylim` (default auto): clamp Y axis to specified bounds.
-  - `--y_axis_percentile` (default `1 99`): percentile range used for automatic Y limits.
-  - `--percentiles` (default `5 25 50 75 95`): percentile bands drawn.
-  - `--line_widths` (default `0.25 1 2 1 0.25`): line widths for percentile envelopes.
-  - `--display_errors` (default disabled) & `--error_metric {uncertainty,bounds}` (default `uncertainty`): plot error bars for single-subject harmonization outputs.
-  - Example:
-    ```bash
-    combat_visualize_harmonization src/clinical_combat/data/CamCAN.md.raw.csv.gz \
-        src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
-        harmonized/pairwise/ModifiedCamCAN.md.pairwise.harmonized.csv.gz \
-        --bundles all \
-        --out_dir figures/harmonization/
-    ```
-
-### Dataset inspection
-
-- `combat_info`: prints population statistics for a single CSV.
-  - `in_file` *(required)*: dataset summarised. No optional switches.
-  - Example:
-    ```bash
-    combat_info src/clinical_combat/data/CamCAN.md.raw.csv.gz
-    ```
-
-## Typical pipeline
-
-1. **Inspect the datasets**
-   ```bash
-   combat_info src/clinical_combat/data/CamCAN.md.raw.csv.gz
-   ```
-2. **Fit a harmonization model**
-   ```bash
-   combat_fit \
-       src/clinical_combat/data/CamCAN.md.raw.csv.gz \
-       src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
-       --method clinical \
-       --out_dir out/models/
-   ```
-3. **Apply the harmonization**
-   ```bash
-   combat_apply \
-       src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
-       out/models/ModifiedCamCAN-CamCAN.md.clinical.model.csv \
-       --out_dir out/harmonized/
-   ```
-4. **Quality control**
-   ```bash
-   combat_QC \
-       src/clinical_combat/data/CamCAN.md.raw.csv.gz \
-       src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
-       out/models/ModifiedCamCAN-CamCAN.md.clinical.model.csv
-   ```
-5. **Visualize the results**
-   ```bash
-   combat_visualize_harmonization \
-       src/clinical_combat/data/CamCAN.md.raw.csv.gz \
-       src/clinical_combat/data/ModifiedCamCAN.md.raw.csv.gz \
-       out/harmonized/ModifiedCamCAN.md.clinical.csv.gz \
-       --out_dir out/figures/
-   ```
-
-`combat_pipeline` can execute steps 2 through 5 in sequence and logs each
-invoked command.
+- `0-CamCAN_Cleaning.ipynb`: cleans the raw CamCAN cohort (drops problematic subjects/bundles).
+- `1-Harmonized_Dataset_Generation.ipynb`: builds the harmonized datasets using all available sites.
+- `2-Dataset_Split_Augment.ipynb`: splits the data into MLP training and harmonization testing sets, and augments the data.
+- `3-Synthetic_Site_Generation.ipynb`: generates synthetic sites to test harmonization and outlier handling.
+- `4-MLP_Training.ipynb`: trains the MLP outlier detector variants.
+- `5-STD_MAE_Calculations.ipynb`: computes STD_MAE metrics across harmonization methods, outlier handling methods, and synthetic sites.
+- `6-STD_MAE_Plots.ipynb`: creates the plots used in the manuscript from the results obtained in notebook 5.
