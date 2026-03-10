@@ -156,7 +156,7 @@ def get_camcan_file(metric, cleaned=False):
     base_dir = (
         os.path.join("DATA", "processed", "CamCAN_clean")
         if cleaned
-        else os.path.join("DATA", "raw_CAMCAN")
+        else os.path.join("DATA", "raw_camcan")
     )
     suffix = "clean" if cleaned else "raw"
     return os.path.join(base_dir, f"CamCAN.{metric}.{suffix}.csv.gz")
