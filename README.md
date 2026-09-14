@@ -115,6 +115,7 @@ combat_pipeline \
 - `data` *(required, one or more from the same site)*: CSV paths or glob patterns (`*`) to process.
 - `--method` (default `HC`): outlier detection method.
   - Statistical methods: `ZS`, `MAD`, `IQR`, `SN`, `QN`, `VS`, `MMS`, `G_ZS`, `G_MAD`.
+  - `PCA_MD`: global, PCA-reduced robust Mahalanobis distance across all metrics/bundles of the site, addressing collinearity between diffusion metrics.
   - `MLP*`: neural network–based outlier detection.
     - `MLP_TEST`: uses the pre-trained model provided in this repository.
     - `MLP_<model_name>`: uses a custom trained MLP model.
