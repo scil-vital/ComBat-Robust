@@ -10,13 +10,18 @@ Rules
 Most methods return a continuous score (higher means more outlier-like).
 VS and MMS return a binary flag (0/1).
 IQR stores the IQR value (Q3 - Q1) as a constant per bundle group.
-MLP, G_ZS, and G_MAD are global scores per patient (sid), not per bundle.
+MLP, G_ZS, G_MAD, and PCA_MD are global scores per patient (sid), not per bundle.
 """
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
+from scipy.stats import chi2
+from sklearn.covariance import MinCovDet
+from sklearn.decomposition import PCA
 
 from clinical_combat.robust.robust_utils import remove_covariates_effects_metrics
 from clinical_combat.robust.robust_MLP import predict_outliers_mlp
@@ -27,6 +32,7 @@ METRICS_LOW = {"fa", "fat", "afd"}  # pathology ↓
 GLOBAL_METHODS = {
     "G_ZS",
     "G_MAD",
+    "PCA_MD",
 }
 DEFAULT_THRESHOLDS = {
     "ZS": 3.0,
@@ -38,6 +44,7 @@ DEFAULT_THRESHOLDS = {
     "MMS": 0.001,
     "G_ZS":1.0,
     "G_MAD" :1.0,
+    "PCA_MD": 1.0,
     "MLP": 0.6,  # applies to any method starting with "MLP"
 }
 
@@ -265,6 +272,126 @@ def mad_detection(df, mean_col="mean_no_cov"):
     )
 
 
+def pca_md_detection(df, mean_col="mean_no_cov", var_explained=0.90, max_components=15):
+    """
+    Compute a global, PCA-based robust Mahalanobis-distance outlier score
+    per patient (sid).
+
+    Diffusion metrics/bundles are highly collinear (e.g. 430 features for
+    10 metrics x 43 bundles), which makes per-feature methods (G_ZS, G_MAD)
+    blind to multivariate outliers that are only unusual in the combination
+    of several correlated features. This method instead:
+
+    1. Pivots the site data to a subjects (sid) x features (metric_bundle)
+       matrix using `mean_col` (covariate-corrected values, as for
+       G_ZS/G_MAD).
+    2. Standardizes (z-scores) each feature within the site.
+    3. Runs PCA on the standardized matrix and keeps the smallest number of
+       components whose cumulative explained variance reaches
+       `var_explained`, capped both at `max_components` and at
+       floor(n_subjects / 5) so the number of samples stays comfortably
+       larger than the number of components fed to the covariance estimate
+       below (MinCovDet needs n_samples notably larger than n_features to
+       be well-posed).
+    4. Computes the robust Mahalanobis distance of each subject's retained
+       component scores with sklearn.covariance.MinCovDet(random_state=0).
+    5. Normalizes the distance so that the classical chi-square outlier
+       cutoff (97.5th percentile with `k` degrees of freedom, `k` being the
+       number of retained components) maps to a score of 1:
+       score = d / sqrt(chi2.ppf(0.975, k)). A subject is an outlier when
+       score > threshold (default threshold 1.0, see DEFAULT_THRESHOLDS).
+
+    Missing data
+    ------------
+    A feature (metric_bundle column) that is missing for every subject
+    carries no information and is dropped. A feature with zero variance
+    across subjects is also dropped (it cannot be z-scored and carries no
+    discriminative information either). Any remaining missing entries
+    (a subject missing a handful of bundles) are imputed with that
+    feature's per-site median: median imputation is robust to the very
+    outliers this method is trying to detect (unlike mean imputation) and
+    keeps every subject in the scoring, so a single missing bundle does not
+    silently drop a subject from outlier screening.
+
+    Degenerate cases
+    -----------------
+    If fewer than 10 subjects are available, or if no usable (non-constant,
+    non-fully-missing) feature remains, a robust covariance cannot be
+    estimated meaningfully; this returns a score of 0 for every subject
+    (nobody flagged) and emits a warning.
+
+    df: DataFrame
+        Input DataFrame containing: sid, metric_bundle, mean_col.
+    mean_col: str
+        Column holding covariate-corrected values.
+    var_explained: float
+        Target cumulative fraction of variance the retained PCA components
+        must explain (subject to the component caps below).
+    max_components: int
+        Hard cap on the number of retained PCA components.
+
+    Returns
+    -------
+    sid_scores: DataFrame
+        Columns: sid, prob_outlier.
+    """
+    pivot = df.pivot_table(index="sid", columns="metric_bundle", values=mean_col, aggfunc="mean")
+    sids = pivot.index.to_numpy()
+    n_subjects = len(sids)
+
+    if n_subjects < 10:
+        warnings.warn(
+            f"PCA_MD: only {n_subjects} subject(s) available (<10); "
+            "returning zero scores for this site."
+        )
+        return pd.DataFrame({"sid": sids, "prob_outlier": 0.0})
+
+    # Drop features that are missing for every subject, then median-impute
+    # any remaining missing entries (see docstring).
+    pivot = pivot.dropna(axis=1, how="all")
+    pivot = pivot.fillna(pivot.median(axis=0))
+
+    X = pivot.to_numpy(dtype=float)
+
+    # Standardize each feature within the site; drop zero-variance features
+    # (cannot be z-scored, carry no information).
+    mu = X.mean(axis=0)
+    sigma = X.std(axis=0, ddof=0)
+    usable = sigma > 1e-12
+    n_features = int(usable.sum())
+
+    if n_features == 0:
+        warnings.warn(
+            "PCA_MD: no usable (non-constant) feature available; "
+            "returning zero scores for this site."
+        )
+        return pd.DataFrame({"sid": sids, "prob_outlier": 0.0})
+
+    Xz = (X[:, usable] - mu[usable]) / sigma[usable]
+
+    # Number of PCA components: smallest k reaching var_explained, capped
+    # at max_components and at floor(n_subjects / 5) (well-posed MCD) and
+    # at the number of available features/samples.
+    cap = min(max_components, n_subjects // 5, n_features, n_subjects - 1)
+    cap = max(cap, 1)
+
+    pca = PCA(n_components=cap, random_state=0)
+    components = pca.fit_transform(Xz)
+    cum_var = np.cumsum(pca.explained_variance_ratio_)
+    k = int(np.searchsorted(cum_var, var_explained) + 1)
+    k = min(k, cap)
+    components = components[:, :k]
+
+    mcd = MinCovDet(random_state=0).fit(components)
+    d2 = mcd.mahalanobis(components)  # squared Mahalanobis distance
+    d = np.sqrt(np.clip(d2, a_min=0.0, a_max=None))
+
+    cutoff = np.sqrt(chi2.ppf(0.975, df=k))
+    score = d / cutoff
+
+    return pd.DataFrame({"sid": sids, "prob_outlier": score.astype(float)})
+
+
 def score_g_zs(df, mean_col="mean_no_cov"):
     """
     Global z-score score per sid, mapped back to all rows.
@@ -298,6 +425,35 @@ def score_g_mad(df, mean_col="mean_no_cov"):
         Score for each row of df.
     """
     sid_scores = mad_detection(df, mean_col=mean_col)
+    return score_from_sid_table(df, sid_scores)
+
+
+def score_pca_md(df, mean_col="mean_no_cov", var_explained=0.90, max_components=15):
+    """
+    Global PCA + robust Mahalanobis-distance score per sid, mapped back to
+    all rows. See pca_md_detection() for the full algorithm description.
+
+    df: DataFrame
+        Input DataFrame.
+    mean_col: str
+        Column holding covariate-corrected values.
+    var_explained: float
+        Target cumulative fraction of variance for the retained PCA
+        components.
+    max_components: int
+        Hard cap on the number of retained PCA components.
+
+    Returns
+    -------
+    scores: Series
+        Score for each row of df.
+    """
+    sid_scores = pca_md_detection(
+        df,
+        mean_col=mean_col,
+        var_explained=var_explained,
+        max_components=max_components,
+    )
     return score_from_sid_table(df, sid_scores)
 
 
@@ -510,6 +666,7 @@ SCORE_METHODS = {
     "MMS": lambda d: score_mms_flag(d),
     "G_ZS": lambda d: score_g_zs(d, mean_col="mean_no_cov"),
     "G_MAD": lambda d: score_g_mad(d, mean_col="mean_no_cov"),
+    "PCA_MD": lambda d: score_pca_md(d, mean_col="mean_no_cov"),
 }
 
 
