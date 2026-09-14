@@ -129,7 +129,7 @@ def fit_script(
         "-f",
     ]
     if robust_threshold is not None:
-        cmd_parts.extend(["--robust-threshold", str(robust_threshold)])
+        cmd_parts.extend(["--robust_threshold", str(robust_threshold)])
     if not eb:
         cmd_parts.append("--no_empirical_bayes")
 
