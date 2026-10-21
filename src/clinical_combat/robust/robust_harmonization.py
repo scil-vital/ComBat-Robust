@@ -54,7 +54,8 @@ def get_output_filename(mov_data_file, metric, harmonization_method, robust):
         Results filename ending with `.csv`.
     """
     site = get_site(mov_data_file)
-    if "test" in mov_data_file:
+    # Only the file name counts: a "test" in a parent folder is not a test set.
+    if "test" in os.path.basename(mov_data_file):
         site += "_test"
 
     return f"{site}.{metric}.{harmonization_method}.{robust}.csv"

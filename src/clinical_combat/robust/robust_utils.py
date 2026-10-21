@@ -114,8 +114,9 @@ def remove_covariates_effects(df):
     Remove covariate effects from 'mean' using a per-bundle linear model.
 
     The fitted covariate effects are subtracted from the original values and
-    stored in 'mean_no_cov'. If handedness has a single unique value, it is
-    excluded from the model.
+    stored in 'mean_no_cov'. If handedness or sex has a single unique value,
+    it is excluded from the model (a constant column makes the design matrix
+    singular).
 
     df: dataframe
         Input long-format DataFrame.
@@ -128,7 +129,10 @@ def remove_covariates_effects(df):
     df = df.sort_values(by=["site", "sid", "bundle"]).copy()
 
     ignore_handedness = df["handedness"].nunique() == 1
-    design, y = get_design_matrices(df, ignore_handedness=ignore_handedness)
+    ignore_sex = df["sex"].nunique() == 1
+    design, y = get_design_matrices(
+        df, ignore_handedness=ignore_handedness, ignore_sex=ignore_sex
+    )
     _alpha, beta = Combat.get_alpha_beta(design, y)
 
     df["mean_no_cov"] = df["mean"]

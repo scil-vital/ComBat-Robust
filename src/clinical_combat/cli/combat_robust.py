@@ -7,7 +7,7 @@ Add an outlier score column to the CSV files of a moving site.
 Takes one CSV file per metric, all for the same site (for example
 site.fa.csv site.md.csv, or a shell wildcard such as data/*.csv). The files
 are concatenated and scored jointly, then each file is rewritten in place
-with a new column named after the method (e.g., MAD, G_ZS, MLP2_ALL).
+with a new column named after the method (e.g., MAD, G_ZS, MLP_TEST).
 The rewritten rows are sorted by site, sid and bundle.
 Global methods (G_*, PCA_*, MLP*) score each patient across all the files
 given, and the MLP models expect the ten metrics.
@@ -51,7 +51,7 @@ def _build_arg_parser():
         "-m",
         "--method",
         default="MAD",
-        help="Outlier detection method (e.g., MAD, MLP2_ALL, G_ZS, VS, etc.). "
+        help="Outlier detection method (e.g., MAD, MLP_TEST, G_ZS, VS, etc.). "
         "IQR, HC and NO add no column. [%(default)s]",
     )
     p.add_argument(

@@ -37,4 +37,4 @@ WORKDIR /clinical-ComBAT
 COPY . .
 RUN uv pip install .
 
-WORKDIR /
+WORKDIR /clinical-ComBAT
