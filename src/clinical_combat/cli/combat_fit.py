@@ -82,7 +82,7 @@ def _build_arg_parser():
     p.add_argument("--robust",
                    default="HC",
                    help="Robust outlier method applied to the moving site before fitting "
-                        "(e.g., MAD, IQR, VS, MLP2_ALL, HC). Use 'NO' to disable. "
+                        "(e.g., MAD, IQR, VS, MLP_TEST, HC). Use 'NO' to disable. "
                         "[%(default)s]")
     p.add_argument("--robust_threshold",
                    type=float,

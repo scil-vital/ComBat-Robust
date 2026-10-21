@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+title: "ComBat-Robust"
+message: "If you use this software, please cite the paper below."
+type: software
+version: 1.2.0
+license: CC-BY-NC-SA-4.0
+repository-code: "https://github.com/scil-vital/ComBat-Robust"
+authors:
+  - family-names: David
+    given-names: Yoan
+    affiliation: "Université de Sherbrooke"
+  - family-names: Jodoin
+    given-names: Pierre-Marc
+    affiliation: "Université de Sherbrooke"
+preferred-citation:
+  type: article
+  title: "Robust-ComBat: Mitigating Outlier Effects in Diffusion MRI Data Harmonization"
+  authors:
+    - family-names: David
+      given-names: Yoan
+    - family-names: Jodoin
+      given-names: Pierre-Marc
+    - name: "Alzheimer's Disease Neuroimaging Initiative"
+    - name: "The TRACK-TBI Investigators"
+  year: 2026
+  journal: "arXiv preprint"
+  doi: "10.48550/arXiv.2603.17968"
+  identifiers:
+    - type: other
+      value: "arXiv:2603.17968"
+      description: "arXiv identifier"
+  url: "https://arxiv.org/abs/2603.17968"

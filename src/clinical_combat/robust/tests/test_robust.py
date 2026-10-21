@@ -40,12 +40,26 @@ def _example_file(metric):
     return os.path.join(DATA_DIR, f"70_pct_example_{metric}.csv")
 
 
+def _read_example(metric):
+    """
+    Read an example file without any score column.
+
+    The README example is run on these files in place, which adds a score
+    column (MAD, MLP_TEST, ...). The tests start from the files as shipped.
+    """
+    df = pd.read_csv(_example_file(metric))
+    scores = [
+        c for c in df.columns
+        if c.upper() in R.SCORE_METHODS or c.upper().startswith("MLP")
+    ]
+    return df.drop(columns=scores)
+
+
 @pytest.fixture(scope="module")
 def example_df():
     """The 10 example metric files of one site (100 subjects, 43 bundles)."""
     return pd.concat(
-        [pd.read_csv(_example_file(m)) for m in U.get_metrics()],
-        ignore_index=True,
+        [_read_example(m) for m in U.get_metrics()], ignore_index=True
     )
 
 
@@ -132,6 +146,23 @@ def test_mlp_scorer_rejects_unknown_metric(example_df):
 @pytest.mark.parametrize("method", ["IQR", "HC", "NO"])
 def test_add_outlier_column_leaves_df_unchanged(method, example_df):
     assert R.add_outlier_column(example_df, method) is example_df
+
+
+@pytest.mark.parametrize("sex", [1, 2])
+def test_scorers_run_when_sex_is_constant(sex, example_df):
+    # The README tells users to fill an unknown sex with 1: the covariates
+    # are then fitted without sex instead of on a singular design matrix.
+    data = example_df[example_df["metric"].isin(SMALL_METRICS)]
+    data = data.assign(sex=sex).reset_index(drop=True)
+
+    cleaned = U.remove_covariates_effects_metrics(data)
+    assert np.isfinite(cleaned["mean_no_cov"]).all()
+
+    for method in ("MAD", "G_MAD"):
+        out = R.add_outlier_column(data, method)
+        assert len(out) == len(data)
+        assert np.isfinite(out[method]).all()
+        assert (out[method] >= 0).all()
 
 
 def test_get_scorer_unknown_method():
@@ -489,15 +520,33 @@ def test_generate_sites_no_file_all_keeps_every_disease(example_df):
 # ---------------------------------------------------------------------------
 # robust_harmonization
 # ---------------------------------------------------------------------------
-def test_output_filenames():
-    mov = _example_file("md")
-    site = U.get_site(mov)
+def test_output_filenames(tmp_path):
+    # The check for a test set looks at the file name only, so these paths
+    # give the same names wherever the repository lives, also under folders
+    # whose name contains "test".
+    folder = tmp_path / "latest_tests"
+    folder.mkdir()
+    plain = folder / "70_pct_example_md.csv"
+    test_set = folder / "test_70_pct_example_md.csv"
+    _read_example("md").to_csv(plain, index=False)
+    shutil.copy(plain, test_set)
+    site = U.get_site(plain)
+
+    for mov in (_example_file("md"), str(plain)):
+        assert RH.get_output_model_filename(
+            mov, "md", harmonization_method="pairwise", robust="MAD"
+        ) == f"{site}.md.pairwise.MAD.model.csv"
+        assert RH.get_output_filename(
+            mov, "md", harmonization_method="pairwise", robust="MAD"
+        ) == f"{site}.md.pairwise.MAD.csv"
+
+    # A test set is told apart by its file name, and has its own output.
     assert RH.get_output_model_filename(
-        mov, "md", harmonization_method="pairwise", robust="MAD"
+        str(test_set), "md", harmonization_method="pairwise", robust="MAD"
     ) == f"{site}.md.pairwise.MAD.model.csv"
     assert RH.get_output_filename(
-        mov, "md", harmonization_method="pairwise", robust="MAD"
-    ) == f"{site}.md.pairwise.MAD.csv"
+        str(test_set), "md", harmonization_method="pairwise", robust="MAD"
+    ) == f"{site}_test.md.pairwise.MAD.csv"
 
 
 def test_expand_data_files(tmp_path):
@@ -601,11 +650,11 @@ def _run_combat_robust(files, *args, cwd=None):
 
 @pytest.fixture
 def site_files(tmp_path):
-    """Writable copies of the 10 example files."""
+    """Writable copies of the 10 example files, without score columns."""
     files = []
     for metric in U.get_metrics():
         dst = tmp_path / f"site.{metric}.csv"
-        shutil.copy(_example_file(metric), dst)
+        _read_example(metric).to_csv(dst, index=False)
         files.append(str(dst))
     return files
 

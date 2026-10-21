@@ -95,7 +95,7 @@ def _build_arg_parser():
     p.add_argument("--robust",
                    default="HC",
                    help="Robust outlier method applied to the moving site before fitting "
-                        "(e.g., MAD, IQR, VS, MLP2_ALL, HC). Use 'NO' to disable. "
+                        "(e.g., MAD, IQR, VS, MLP_TEST, HC). Use 'NO' to disable. "
                         "[%(default)s]")
     p.add_argument("--robust_threshold",
                    type=float,
@@ -264,8 +264,9 @@ def main():
         cmd += " --regul_mov " + str(args.regul_mov)
     if args.degree:
         cmd += " --degree " + str(args.degree)
-    if args.smooth_terms:
-        cmd += " --smooth_terms " + " ".join(args.smooth_terms)
+    # An empty list means "none": it must be forwarded, because combat_fit
+    # would otherwise fall back to its default smooth term (age).
+    cmd += " --smooth_terms " + (" ".join(args.smooth_terms) or "none")
     if args.df_spline:
         cmd += " --df_spline " + str(args.df_spline)
     if args.spline_degree:

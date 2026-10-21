@@ -17,5 +17,9 @@ __pycache__/
 build/
 dist/
 
-# Local data folder
-DONNEES
+# Quick example outputs, notebook 4 outputs (trained MLP and TensorBoard logs)
+demo/
+quicktest_demo_*/
+results/
+Pytorch_models/mlp_example_*
+Pytorch_models/runs/
