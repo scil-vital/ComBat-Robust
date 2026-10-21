@@ -1,14 +1,15 @@
-import json
 import os
-import subprocess
 
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.model_selection import train_test_split
 
-from clinical_combat.harmonization.Combat import Combat
-from clinical_combat.robust.robust_utils import remove_covariates_effects
+from ..harmonization.Combat import Combat
+from .robust_utils import (
+    get_design_matrices,
+    remove_covariates_effects,
+)
 
 
 def augment_df(df, new_copies=2):
@@ -37,9 +38,7 @@ def augment_df(df, new_copies=2):
             for sid_val in temp_df["sid"].unique()
         }
 
-        temp_df["age"] = temp_df.apply(
-            lambda row: row["age"] + sid_modifications[row["sid"]], axis=1
-        )
+        temp_df["age"] = temp_df["age"] + temp_df["sid"].map(sid_modifications)
         temp_df["sid"] = temp_df["sid"].astype(str) + f"_aug{copy_index}"
         temp_df["mean"] = temp_df["mean"] * (
             1 + np.random.choice([-0.02, -0.01, 0.01, 0.02], size=len(temp_df))
@@ -48,41 +47,6 @@ def augment_df(df, new_copies=2):
         augmented_dfs.append(temp_df)
 
     return pd.concat(augmented_dfs, ignore_index=True)
-
-
-def get_design_matrices(df, ignore_handedness=False, ignore_sex=False):
-    """
-    Build design matrices and targets for ComBat regression per bundle.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Dataset containing `bundle`, `sid`, `age`, `mean`, `sex`,
-        and `handedness`.
-    ignore_handedness : bool, optional
-        If True, drop handedness from the design matrix.
-    ignore_sex : bool, optional
-        If True, drop sex from the design matrix.
-
-    Returns
-    -------
-    tuple[list[np.ndarray], list[np.ndarray]]
-        Design matrices and target vectors for each bundle.
-    """
-    design = []
-    targets = []
-    for bundle in np.unique(df["bundle"]):
-        data = df.query("bundle == @bundle")
-        hstack_list = [np.ones(len(data["sid"]))]  # intercept
-        if not ignore_sex:
-            hstack_list.append(Combat.to_category(data["sex"]))
-        if not ignore_handedness:
-            hstack_list.append(Combat.to_category(data["handedness"]))
-        ages = data["age"].to_numpy()
-        hstack_list.append(ages)
-        design.append(np.array(hstack_list))
-        targets.append(data["mean"].to_numpy())
-    return design, targets
 
 
 def split_train_test(df, test_size=0.2, random_state=None):
@@ -177,7 +141,7 @@ def sample_patients(df, num_patients, disease_ratio, index):
     return sampled_df
 
 
-def generate_biaised_data(
+def generate_biased_data(
     df1,
     df2,
     fixed_bias=False,
@@ -203,6 +167,9 @@ def generate_biaised_data(
         Second dataset that receives the same set of biases.
     fixed_bias : bool, optional
         If True, use fixed bias values instead of random draws.
+    centered_bias : bool, optional
+        If True, apply the bias to the residuals of the covariate model fitted
+        on healthy controls, so that the covariate effects are preserved.
     additive_uniform_low : float, optional
         Lower bound for the additive bias mean sampling.
     additive_uniform_high : float, optional
@@ -256,7 +223,11 @@ def generate_biaised_data(
             )
 
     biased_df = apply_bias(
-        df1, df2, additive_bias_per_bundle, multiplicative_bias_per_bundle, centered_bias=centered_bias
+        df1,
+        df2,
+        additive_bias_per_bundle,
+        multiplicative_bias_per_bundle,
+        centered_bias=centered_bias,
     )
 
     biased_df1 = biased_df[biased_df["sid"].isin(df1["sid"])]
@@ -291,6 +262,9 @@ def apply_bias(df1, df2, additive_bias_per_bundle, multiplicative_bias_per_bundl
         Additive bias per bundle key.
     multiplicative_bias_per_bundle : dict
         Multiplicative bias per bundle key.
+    centered_bias : bool, optional
+        If True, apply the bias to the residuals of the covariate model fitted
+        on healthy controls, so that the covariate effects are preserved.
 
     Returns
     -------
@@ -298,16 +272,15 @@ def apply_bias(df1, df2, additive_bias_per_bundle, multiplicative_bias_per_bundl
         Concatenated biased dataset.
     """
     biased_df_all = pd.concat([df1, df2], ignore_index=True)
-    new_biased_df = pd.DataFrame()
+    biased_frames = []
     for metric in biased_df_all["metric"].unique():
         biased_df = biased_df_all[biased_df_all["metric"] == metric]
         biased_df = biased_df.sort_values(by=["site", "sid", "bundle"])
+        # Handedness is never modelled when simulating site effects.
         ignore_handedness = True
         ignore_sex = False
         if biased_df["sex"].nunique() == 1:
             ignore_sex = True
-        if biased_df["handedness"].nunique() == 1:
-            ignore_handedness = True
         design, target = get_design_matrices(biased_df, ignore_handedness, ignore_sex)
         design_hc, y_hc = get_design_matrices(
             biased_df[biased_df["disease"] == "HC"], ignore_handedness, ignore_sex
@@ -320,16 +293,21 @@ def apply_bias(df1, df2, additive_bias_per_bundle, multiplicative_bias_per_bundl
             covariate_effect = np.dot(design[i][1:, :].transpose(), beta[i])
             if centered_bias:
                 biased_df.loc[biased_df["bundle"] == bundle, "mean"] = (
-                     (y[i] - covariate_effect - alpha[i]) * multiplicative_bias + additive_bias * np.std(y[i]) + (covariate_effect + alpha[i])
+                    (target[i] - covariate_effect - alpha[i])
+                    * multiplicative_bias
+                    + additive_bias * np.std(target[i])
+                    + (covariate_effect + alpha[i])
                 )
             else:
                 biased_df.loc[biased_df["bundle"] == bundle, "mean"] = (
                     target[i] * multiplicative_bias + additive_bias * np.std(target[i])
                 )
 
-        new_biased_df = pd.concat([new_biased_df, biased_df], ignore_index=True)
+        biased_frames.append(biased_df)
 
-    return new_biased_df
+    if not biased_frames:
+        return pd.DataFrame()
+    return pd.concat(biased_frames, ignore_index=True)
 
 
 def process_test(
@@ -344,7 +322,7 @@ def process_test(
     centered_bias=False
 ):
     """
-    Generate one synthetic site split, save outputs, and visualize when needed.
+    Generate one synthetic site split and save the outputs.
 
     Parameters
     ----------
@@ -361,9 +339,12 @@ def process_test(
     directory : str
         Root directory where outputs are written.
     data_path : str
-        Path to the original CSV dataset.
-    fixed_biais : bool, optional
+        Unused, kept for the positional call made by `generate_sites`.
+    fixed_bias : bool, optional
         Whether to use fixed bias parameters.
+    centered_bias : bool, optional
+        Whether to apply the bias to the residuals of the covariate model
+        (see `apply_bias`).
 
     Returns
     -------
@@ -373,35 +354,34 @@ def process_test(
     temp_dir = os.path.join(size_dir, f"{i}")
     os.makedirs(temp_dir, exist_ok=True)
     (
-        train_df_biaised,
-        test_df_biaised,
-        gammas,
-        deltas,
-        parameters,
-    ) = generate_biaised_data(train_df, test_df, fixed_bias, centered_bias)
-    sampled_df_biaied = sample_patients(
-        train_df_biaised, sample_size, disease_ratio, i
+        train_df_biased,
+        test_df_biased,
+        _,
+        _,
+        _,
+    ) = generate_biased_data(train_df, test_df, fixed_bias, centered_bias)
+    sampled_df_biased = sample_patients(
+        train_df_biased, sample_size, disease_ratio, i
     )
 
-    train_sids = sampled_df_biaied["sid"].unique()
+    train_sids = sampled_df_biased["sid"].unique()
     ground_truth_train = train_df[train_df["sid"].isin(train_sids)]
     ground_truth_test = test_df
 
-    if "metric_bundle" in sampled_df_biaied.columns:
+    ground_truth_train_file = os.path.join(
+        temp_dir, f"gt_train_{sample_size}_{int(disease_ratio * 100)}_{i}.csv"
+    )
+    ground_truth_train.to_csv(ground_truth_train_file, index=False)
 
-        ground_truth_train_file = os.path.join(
-            temp_dir, f"gt_train_{sample_size}_{int(disease_ratio * 100)}_{i}.csv"
-        )
-        ground_truth_train.to_csv(ground_truth_train_file, index=False)
+    ground_truth_test_file = os.path.join(
+        temp_dir, f"gt_test_{sample_size}_{int(disease_ratio * 100)}_{i}.csv"
+    )
+    ground_truth_test.to_csv(ground_truth_test_file, index=False)
 
-        ground_truth_test_file = os.path.join(
-            temp_dir, f"gt_test_{sample_size}_{int(disease_ratio * 100)}_{i}.csv"
-        )
-        ground_truth_test.to_csv(ground_truth_test_file, index=False)
-
-        for metric in sampled_df_biaied["metric"].unique():
-            metric_df = sampled_df_biaied[sampled_df_biaied["metric"] == metric]
-            metric_test_df = test_df_biaised[test_df_biaised["metric"] == metric]
+    if "metric_bundle" in sampled_df_biased.columns:
+        for metric in sampled_df_biased["metric"].unique():
+            metric_df = sampled_df_biased[sampled_df_biased["metric"] == metric]
+            metric_test_df = test_df_biased[test_df_biased["metric"] == metric]
             gt_metric_df = ground_truth_train[
                 ground_truth_train["metric"] == metric
             ]
@@ -439,22 +419,12 @@ def process_test(
         temp_train_file = os.path.join(
             temp_dir, f"train_{sample_size}_{int(disease_ratio * 100)}_{i}.csv"
         )
-        sampled_df_biaied.to_csv(temp_train_file, index=False)
+        sampled_df_biased.to_csv(temp_train_file, index=False)
 
         temp_test_file = os.path.join(
             temp_dir, f"test_{sample_size}_{int(disease_ratio * 100)}_{i}.csv"
         )
-        test_df_biaised.to_csv(temp_test_file, index=False)
-
-        ground_truth_train_file = os.path.join(
-            temp_dir, f"gt_train_{sample_size}_{int(disease_ratio * 100)}_{i}.csv"
-        )
-        ground_truth_train.to_csv(ground_truth_train_file, index=False)
-
-        ground_truth_test_file = os.path.join(
-            temp_dir, f"gt_test_{sample_size}_{int(disease_ratio * 100)}_{i}.csv"
-        )
-        ground_truth_test.to_csv(ground_truth_test_file, index=False)
+        test_df_biased.to_csv(temp_test_file, index=False)
 
 
 def generate_sites(
@@ -488,9 +458,13 @@ def generate_sites(
     camcan_hc_only : bool, optional
         If True, keep only CamCAN healthy controls.
     disease : str or None, optional
-        Disease filter; keeps HC plus the specified disease.
-    fixed_biais : bool, optional
+        Disease filter; keeps HC plus the specified disease. None or "ALL"
+        keeps every disease and "ASTMIX" keeps AD, SCHZ, TBI and HC.
+    fixed_bias : bool, optional
         Whether to use fixed bias parameters.
+    centered_bias : bool, optional
+        Whether to apply the bias to the residuals of the covariate model
+        (see `apply_bias`).
     n_jobs : int, optional
         Number of parallel jobs.
 
@@ -544,7 +518,8 @@ def generate_sites_no_file(
     df : pd.DataFrame
         Dataset used to sample synthetic sites.
     disease : str or None, optional
-        Disease filter; keeps HC plus the specified disease.
+        Disease filter; keeps HC plus the specified disease. None or "ALL"
+        keeps every disease and "ASTMIX" keeps AD, SCHZ, TBI and HC.
     n_jobs : int, optional
         Number of parallel jobs.
 
@@ -557,7 +532,7 @@ def generate_sites_no_file(
     df = df[~((df["disease"] == "HC") & (df["source_site"] != "CamCAN"))]
     if disease == "ASTMIX":
         df = df[df["disease"].isin(["AD", "SCHZ", "TBI", "HC"])]
-    elif disease is not None:
+    elif disease is not None and disease != "ALL":
         df = df[(df["disease"] == disease) | (df["disease"] == "HC")]
     dfs = Parallel(n_jobs=n_jobs)(
         delayed(sample_patients)(df, sample_size, disease_ratio, i)
@@ -567,29 +542,3 @@ def generate_sites_no_file(
     )
     return dfs
 
-
-def mlp_syn_sites_biais(df, sample_size, disease_ratio, i):
-    """
-    Create a biased synthetic site sample for MLP experiments.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Dataset used to sample patients.
-    sample_size : int
-        Total number of patients to sample.
-    disease_ratio : float
-        Fraction of diseased patients to include.
-    i : int
-        Replicate index for naming outputs.
-
-    Returns
-    -------
-    pd.DataFrame
-        Sampled and biased synthetic site dataset.
-    """
-    sampled_df = sample_patients(df, sample_size, disease_ratio, i)
-    sampled_df_biaied, *_ = generate_biaised_data(
-        sampled_df, pd.DataFrame()
-    )
-    return sampled_df_biaied

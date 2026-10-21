@@ -9,3 +9,13 @@ src/clinical_combat.egg-info
 
 DATA
 RESULTS
+
+# Python and Jupyter caches, local environments, build outputs
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+build/
+dist/
+
+# Local data folder
+DONNEES

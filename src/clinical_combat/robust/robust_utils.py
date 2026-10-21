@@ -1,14 +1,11 @@
-import glob
 import os
-import re
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 
-from clinical_combat.cli import combat_info
-from clinical_combat.harmonization.Combat import Combat
+from ..harmonization.Combat import Combat
+
+METRICS = ("ad", "adt", "afd", "fa", "fat", "fw", "md", "mdt", "rd", "rdt")
 
 
 def get_metrics():
@@ -20,7 +17,7 @@ def get_metrics():
     metrics: list
         List of metric names.
     """
-    return ["ad", "adt", "afd", "fa", "fat", "fw", "md", "mdt", "rd", "rdt"]
+    return list(METRICS)
 
 
 def get_site(mov_data_file):
@@ -64,12 +61,13 @@ def add_nb_patients_and_diseased(df):
     return df
 
 
-def get_design_matrices(df, ignore_handedness=False):
+def get_design_matrices(df, ignore_handedness=False, ignore_sex=False):
     """
     Build per-bundle design matrices and response vectors.
 
     The model includes:
-    intercept, sex (categorical), handedness (categorical, optional), age.
+    intercept, sex (categorical, optional), handedness (categorical, optional),
+    age.
 
     df: dataframe
         Input long-format DataFrame with columns including
@@ -77,6 +75,9 @@ def get_design_matrices(df, ignore_handedness=False):
 
     ignore_handedness: bool
         If True, do not include handedness in the design matrix.
+
+    ignore_sex: bool
+        If True, do not include sex in the design matrix.
 
     Returns
     -------
@@ -93,7 +94,9 @@ def get_design_matrices(df, ignore_handedness=False):
         data = df.query("bundle == @bundle")
 
         parts = [np.ones(len(data["sid"]))]  # intercept
-        parts.append(Combat.to_category(data["sex"]))
+
+        if not ignore_sex:
+            parts.append(Combat.to_category(data["sex"]))
 
         if not ignore_handedness:
             parts.append(Combat.to_category(data["handedness"]))

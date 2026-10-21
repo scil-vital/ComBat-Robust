@@ -34,7 +34,10 @@ import os
 import numpy as np
 import pandas as pd
 
-from clinical_combat.robust.robust import add_outlier_column, filter_outliers_by_threshold, DEFAULT_THRESHOLDS
+from clinical_combat.robust.robust import (
+    DEFAULT_THRESHOLDS,
+    filter_outliers_by_threshold,
+)
 from clinical_combat.harmonization import from_model_name
 from clinical_combat.utils.scilpy_utils import (
     add_overwrite_arg,
@@ -203,8 +206,12 @@ def main():
         mov_data = filter_outliers_by_threshold(
             mov_data, robust_method, args.robust_threshold)
 
-    cols = list(DEFAULT_THRESHOLDS.keys())
-    cols_to_drop = [c for c in cols if c in mov_data.columns]
+    # Drop the score columns added by combat_robust (MLP score columns are
+    # named after the run, e.g. MLP_TEST, MLP1_ALL).
+    cols_to_drop = [
+        c for c in mov_data.columns
+        if c in DEFAULT_THRESHOLDS or str(c).startswith("MLP")
+    ]
     mov_data =  mov_data.drop(columns=cols_to_drop)
 
     if args.output_model_filename == "":

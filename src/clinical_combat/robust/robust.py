@@ -9,17 +9,26 @@ A separate step can apply a threshold on that column.
 Rules
 Most methods return a continuous score (higher means more outlier-like).
 VS and MMS return a binary flag (0/1).
-IQR stores the IQR value (Q3 - Q1) as a constant per bundle group.
-MLP, G_ZS, and G_MAD are global scores per patient (sid), not per bundle.
+IQR, HC and NO add no column: they are applied directly when filtering
+(filter_outliers_by_threshold, called by combat_fit).
+MLP, G_ZS, G_MAD, PCA_ZS, and PCA_MAD are global scores per patient
+(sid), not per bundle.
 """
 
 from __future__ import annotations
 
+import logging
+import warnings
+
 import numpy as np
 import pandas as pd
+from sklearn.decomposition import PCA
 
-from clinical_combat.robust.robust_utils import remove_covariates_effects_metrics
-from clinical_combat.robust.robust_MLP import predict_outliers_mlp
+from .robust_utils import (
+    METRICS,
+    remove_covariates_effects_metrics,
+)
+from .robust_MLP import predict_outliers_mlp
 
 METRICS_HIGH = {"md", "mdt", "rd", "rdt", "fw", "ad", "adt"}  # pathology ↑
 METRICS_LOW = {"fa", "fat", "afd"}  # pathology ↓
@@ -27,6 +36,8 @@ METRICS_LOW = {"fa", "fat", "afd"}  # pathology ↓
 GLOBAL_METHODS = {
     "G_ZS",
     "G_MAD",
+    "PCA_ZS",
+    "PCA_MAD",
 }
 DEFAULT_THRESHOLDS = {
     "ZS": 3.0,
@@ -36,8 +47,10 @@ DEFAULT_THRESHOLDS = {
     "QN": 3.0,
     "VS": 1.0,
     "MMS": 0.001,
-    "G_ZS":1.0,
-    "G_MAD" :1.0,
+    "G_ZS": 1.0,
+    "G_MAD": 1.0,
+    "PCA_ZS": 1.0,
+    "PCA_MAD": 1.0,
     "MLP": 0.6,  # applies to any method starting with "MLP"
 }
 
@@ -165,14 +178,9 @@ def mms_outlier_indices(data, threshold=0.001):
     column = "mean_no_cov"
     metric = str(data["metric"].iloc[0])
 
-    if metric in METRICS_HIGH:
-        pick_idx = lambda s: s.idxmax()
-        direction_ok = lambda mean, median: mean > median
-    elif metric in METRICS_LOW:
-        pick_idx = lambda s: s.idxmin()
-        direction_ok = lambda mean, median: mean < median
-    else:
+    if metric not in METRICS_HIGH and metric not in METRICS_LOW:
         return []
+    pick_max = metric in METRICS_HIGH
 
     outliers_idx = []
     work = data[[column]].copy()
@@ -183,12 +191,12 @@ def mms_outlier_indices(data, threshold=0.001):
 
         if median == 0.0:
             break
-        if not direction_ok(mean, median):
+        if not (mean > median if pick_max else mean < median):
             break
         if abs(median - mean) / abs(median) < float(threshold):
             break
 
-        target_idx = pick_idx(work[column])
+        target_idx = work[column].idxmax() if pick_max else work[column].idxmin()
         outliers_idx.append(target_idx)
         work = work.drop(target_idx)
 
@@ -265,6 +273,108 @@ def mad_detection(df, mean_col="mean_no_cov"):
     )
 
 
+def _pivot_subjects_by_feature(df, mean_col):
+    """
+    Pivot a long-format DataFrame to a subjects (sid) x features
+    (metric_bundle) matrix of `mean_col` values (mean over duplicates).
+
+    df: DataFrame
+        Input DataFrame containing: sid, metric_bundle, mean_col.
+    mean_col: str
+        Column holding covariate-corrected values.
+
+    Returns
+    -------
+    pivot: DataFrame
+        Indexed by sid, one column per metric_bundle.
+    """
+    return df.pivot_table(
+        index="sid", columns="metric_bundle", values=mean_col, aggfunc="mean"
+    )
+
+
+def _standardize_features(pivot):
+    """
+    Preprocess a subjects x features matrix for the PCA-based scores.
+
+    Features missing for every subject are dropped, the remaining missing
+    entries are imputed with the per-feature (per-site) median, then each
+    feature is z-scored within the site (ddof=0). Features that cannot be
+    z-scored (standard deviation <= 1e-12) are dropped.
+
+    pivot: DataFrame
+        Subjects x features matrix, see `_pivot_subjects_by_feature`.
+
+    Returns
+    -------
+    Xz: ndarray
+        Standardized matrix of shape (n_subjects, n_usable_features).
+    """
+    pivot = pivot.dropna(axis=1, how="all")
+    pivot = pivot.fillna(pivot.median(axis=0))
+    X = pivot.to_numpy(dtype=float)
+
+    mu = X.mean(axis=0)
+    sigma = X.std(axis=0, ddof=0)
+    usable = sigma > 1e-12
+    return (X[:, usable] - mu[usable]) / sigma[usable]
+
+
+def pca_global_detection(df, mean_col="mean_no_cov", n_components=15, scaling="zs", agg="mean"):
+    """
+    Global PCA-space outlier score per sid: pivot to subjects x
+    metric_bundle, z-score each feature within the site, run PCA,
+    standardize each retained component (scaling), then aggregate across
+    components (agg). Same idea as G_ZS/G_MAD but on decorrelated PCA
+    scores, which limits the weight of collinear metrics and bundles.
+
+    df: DataFrame with sid, metric_bundle, mean_col.
+    mean_col: column holding covariate-corrected values.
+    n_components: requested PCA components (capped by n_subjects - 1 and
+        the number of usable features).
+    scaling: "zs" -> (t - mean) / std; "mad" -> (t - median) / (1.4826*MAD).
+    agg: "mean" -> mean(|z|) (mirrors G_ZS/G_MAD); "rms" -> sqrt(mean(z**2))
+        (Mahalanobis distance in PC space / sqrt(k)).
+
+    Returns
+    -------
+    sid_scores: DataFrame with columns sid, prob_outlier.
+    """
+    pivot = _pivot_subjects_by_feature(df, mean_col)
+    sids = pivot.index.to_numpy()
+    n_subjects = len(sids)
+
+    if n_subjects < 10:
+        warnings.warn(
+            f"pca_global_detection: only {n_subjects} subject(s) available "
+            "(<10); returning zero scores for this site."
+        )
+        return pd.DataFrame({"sid": sids, "prob_outlier": 0.0})
+
+    Xz = _standardize_features(pivot)
+
+    if Xz.shape[1] == 0:
+        warnings.warn(
+            "pca_global_detection: no usable (non-constant) feature "
+            "available; returning zero scores for this site."
+        )
+        return pd.DataFrame({"sid": sids, "prob_outlier": 0.0})
+
+    k = min(n_components, n_subjects - 1, Xz.shape[1])
+    T = PCA(n_components=k, svd_solver="full").fit_transform(Xz)
+
+    if scaling == "zs":
+        center, spread = T.mean(axis=0), T.std(axis=0, ddof=0)
+    else:
+        center = np.median(T, axis=0)
+        spread = 1.4826 * np.median(np.abs(T - center), axis=0)
+    spread = np.maximum(spread, 1e-6)
+    Z = (T - center) / spread
+
+    score = np.abs(Z).mean(axis=1) if agg == "mean" else np.sqrt((Z**2).mean(axis=1))
+    return pd.DataFrame({"sid": sids, "prob_outlier": score.astype(float)})
+
+
 def score_g_zs(df, mean_col="mean_no_cov"):
     """
     Global z-score score per sid, mapped back to all rows.
@@ -301,18 +411,57 @@ def score_g_mad(df, mean_col="mean_no_cov"):
     return score_from_sid_table(df, sid_scores)
 
 
+def score_pca_zs(df, mean_col="mean_no_cov"):
+    """
+    Global PCA z-score (scaling='zs', agg='mean') per sid, mapped back to
+    all rows. See pca_global_detection() for the algorithm.
+
+    df: DataFrame
+        Input DataFrame.
+    mean_col: str
+        Column holding covariate-corrected values.
+
+    Returns
+    -------
+    scores: Series
+        Score for each row of df.
+    """
+    sid_scores = pca_global_detection(df, mean_col=mean_col, scaling="zs", agg="mean")
+    return score_from_sid_table(df, sid_scores)
+
+
+def score_pca_mad(df, mean_col="mean_no_cov"):
+    """
+    Global PCA MAD-score (scaling='mad', agg='mean') per sid, mapped back
+    to all rows. See pca_global_detection() for the algorithm.
+
+    df: DataFrame
+        Input DataFrame.
+    mean_col: str
+        Column holding covariate-corrected values.
+
+    Returns
+    -------
+    scores: Series
+        Score for each row of df.
+    """
+    sid_scores = pca_global_detection(df, mean_col=mean_col, scaling="mad", agg="mean")
+    return score_from_sid_table(df, sid_scores)
+
+
 def remove_outliers_iqr(data, k):
     """
     Remove rows considered outliers based on the IQR method
     applied to the column 'mean_no_cov'.
 
-    An observation is removed if its value lies outside
-    [Q1 - k·IQR, Q3 + k·IQR].
+    Q1, Q3 and the IQR are computed separately for each (metric, bundle)
+    group. An observation is removed if its value lies outside
+    [Q1 - k·IQR, Q3 + k·IQR] of its group.
 
     Parameters
     ----------
-    df : DataFrame
-        Input DataFrame.
+    data : DataFrame
+        Input DataFrame with columns: metric, bundle, mean_no_cov.
 
     k : float
         IQR multiplier controlling the aggressiveness of
@@ -321,7 +470,7 @@ def remove_outliers_iqr(data, k):
     Returns
     -------
     cleaned_df : DataFrame
-        DataFrame with outlier rows removed.
+        DataFrame with outlier rows removed and a fresh index.
     """
 
     col = "mean_no_cov"
@@ -461,8 +610,10 @@ def score_mlp_from_model(df, run_name):
     scores: Series
         Score for each row of df.
     """
-    if not all(metric in ["ad", "adt", "afd", "fa", "fat", "fw", "md", "mdt", "rd", "rdt"] for metric in df["metric"].unique()):
-        raise ValueError("Invalid metrics. Must be exactly one of: ad, adt, afd, fa, fat, fw, md, mdt, rd, rdt")
+    if not all(metric in METRICS for metric in df["metric"].unique()):
+        raise ValueError(
+            "Invalid metrics. Every metric must be one of: " + ", ".join(METRICS)
+        )
     pred = predict_outliers_mlp(df, run_name=run_name)  # columns: sid, prob_outlier
     return score_from_sid_table(df, pred)
 
@@ -487,10 +638,11 @@ def score_mms_flag(data):
     """
     MMS method binary flag within the group.
 
+    The relative mean/median convergence threshold is fixed to 0.001
+    (see mms_outlier_indices).
+
     data: DataFrame
         Group DataFrame.
-    threshold: float
-        Convergence threshold.
 
     Returns
     -------
@@ -502,14 +654,16 @@ def score_mms_flag(data):
 
 
 SCORE_METHODS = {
-    "ZS": lambda d: score_zscore_bundle(d),
-    "MAD": lambda d: score_mad_bundle(d),
-    "SN": lambda d: score_sn(d),
-    "QN": lambda d: score_qn(d),
-    "VS": lambda d: score_vs_flag(d),
-    "MMS": lambda d: score_mms_flag(d),
-    "G_ZS": lambda d: score_g_zs(d, mean_col="mean_no_cov"),
-    "G_MAD": lambda d: score_g_mad(d, mean_col="mean_no_cov"),
+    "ZS": score_zscore_bundle,
+    "MAD": score_mad_bundle,
+    "SN": score_sn,
+    "QN": score_qn,
+    "VS": score_vs_flag,
+    "MMS": score_mms_flag,
+    "G_ZS": score_g_zs,
+    "G_MAD": score_g_mad,
+    "PCA_ZS": score_pca_zs,
+    "PCA_MAD": score_pca_mad,
 }
 
 
@@ -523,7 +677,8 @@ def get_scorer(method):
     Returns
     -------
     scorer: callable
-        Function (df, threshold) -> Series.
+        Function df -> Series with one score per row of df. The threshold is
+        applied later, see filter_outliers_by_threshold.
     """
     if method in SCORE_METHODS:
         return SCORE_METHODS[method]
@@ -545,18 +700,26 @@ def add_outlier_column(df, method):
         remove_covariates_effects_metrics(.) must create 'mean_no_cov'.
         If 'metric_bundle' is missing, it will be created as 'metric' + '_' + 'bundle'.
     method: str
-        One of SCORE_METHODS keys, or any name starting with 'MLP'.
-    threshold: float
-        Optional parameter used by some methods (mainly MMS).
+        One of SCORE_METHODS keys, or any name starting with 'MLP'. The
+        score column is named after the method. IQR, HC and NO add no
+        column: df is returned unchanged since these methods are applied
+        when filtering (see filter_outliers_by_threshold).
 
     Returns
     -------
     out: DataFrame
-        Copy of df with the score column added.
-        Drops 'mean_no_cov' and 'metric_bundle' before returning.
+        Copy of df with the score column added. The covariate effects are
+        removed per metric, so the rows are sorted by site, sid and bundle
+        within each metric and the index is renumbered.
+        Drops 'mean_no_cov' and 'metric_bundle' (even if present in df)
+        before returning.
     """
     if method in {"IQR", "HC", "NO"}:
-        print(f"{method} outliers are removed directly during fit(); no additional filtering step will be applied.")
+        logging.info(
+            "%s outliers are removed directly during fit(); "
+            "no additional filtering step will be applied.",
+            method,
+        )
         return df
     scorer = get_scorer(method)
 
@@ -573,38 +736,53 @@ def add_outlier_column(df, method):
     is_global = method in GLOBAL_METHODS or method.upper().startswith("MLP")
     if is_global:
         out[col_name] = scorer(out).astype(float)
-        return out.drop(columns=["mean_no_cov", "metric_bundle"], errors="ignore")
-
     else:
         out[col_name] = 0.0
         for _, sub in out.groupby("metric_bundle", sort=False):
             out.loc[sub.index, col_name] = scorer(sub).astype(float)
-        return out.drop(columns=["mean_no_cov", "metric_bundle"], errors="ignore")
+    return out.drop(columns=["mean_no_cov", "metric_bundle"], errors="ignore")
 
 
 def filter_outliers_by_threshold(df, method, threshold):
     """
-    Return indices where df[method] >= threshold.
+    Return the rows of df kept by the robust method.
+
+    HC keeps the rows with disease == "HC" and NO returns df as is. IQR
+    removes the covariate effects and returns the IQR-filtered frame (with
+    the extra column 'mean_no_cov'). Other methods keep the rows where
+    df[method] < threshold.
 
     df: DataFrame
         Input DataFrame containing the method.
     method: str
         Name of the score column.
-    threshold: float
-        Threshold applied to the score column.
+    threshold: float or None
+        Threshold applied to the score column. If None, the default of the
+        method is used (DEFAULT_THRESHOLDS, "MLP" for any name starting with
+        'MLP').
 
     Returns
     -------
-    outliers_idx: list
-        List of DataFrame indices where score >= threshold.
+    kept: DataFrame
+        Rows kept after the filtering (score < threshold).
     """
     if method == "NO":
         return df
     if method == "HC":
         return df[df["disease"] == "HC"]
-    
+
     if threshold is None:
-        threshold = DEFAULT_THRESHOLDS["MLP"] if method.startswith("MLP") else DEFAULT_THRESHOLDS[method]
+        if method.upper().startswith("MLP"):
+            threshold = DEFAULT_THRESHOLDS["MLP"]
+        elif method in DEFAULT_THRESHOLDS:
+            threshold = DEFAULT_THRESHOLDS[method]
+        else:
+            supported = sorted(set(DEFAULT_THRESHOLDS) | {"HC", "NO"})
+            raise ValueError(
+                f"No default threshold for method '{method}'. "
+                f"Pass a threshold, or use one of: {supported} "
+                "or any name starting with 'MLP'."
+            )
     if method == "IQR":
         df = remove_covariates_effects_metrics(df)
         return remove_outliers_iqr(df, k=threshold)
