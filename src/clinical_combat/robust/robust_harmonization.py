@@ -1,13 +1,14 @@
+import glob
 import os
 import subprocess
 
 import pandas as pd
 
-from src.clinical_combat.robust.robust_utils import get_site
+from .robust_utils import get_site
 
 
 def get_output_model_filename(
-    mov_data_file, metric, harmonizartion_method, robust
+    mov_data_file, metric, harmonization_method, robust
 ):
     """
     Build the output model filename for a moving dataset.
@@ -16,7 +17,7 @@ def get_output_model_filename(
         Path to the moving dataset file.
     metric: str
         Metric name used for harmonization.
-    harmonizartion_method: str
+    harmonization_method: str
         Harmonization method used.
     robust: str
         Robust harmonization method used.
@@ -29,12 +30,12 @@ def get_output_model_filename(
     return (
         f"{get_site(mov_data_file)}."
         f"{metric}."
-        f"{harmonizartion_method}."
+        f"{harmonization_method}."
         f"{robust}.model.csv"
     )
 
 
-def get_output_filename(mov_data_file, metric, harmonizartion_method, robust):
+def get_output_filename(mov_data_file, metric, harmonization_method, robust):
     """
     Build the output filename for harmonized results.
 
@@ -42,7 +43,7 @@ def get_output_filename(mov_data_file, metric, harmonizartion_method, robust):
         Path to the moving dataset file.
     metric: str
         Metric name used for harmonization.
-    harmonizartion_method: str
+    harmonization_method: str
         Harmonization method used.
     robust: str
         Robust harmonization method used.
@@ -56,27 +57,70 @@ def get_output_filename(mov_data_file, metric, harmonizartion_method, robust):
     if "test" in mov_data_file:
         site += "_test"
 
-    return f"{site}.{metric}.{harmonizartion_method}.{robust}.csv"
+    return f"{site}.{metric}.{harmonization_method}.{robust}.csv"
+
+
+def _expand_data_files(mov_data_files):
+    """
+    Expand moving dataset files given as a string, a path or a list of paths.
+
+    mov_data_files: str, os.PathLike or list
+        A path-like object, or a string that is an existing file path, is
+        one path used as is (no split, no glob). Any other string is split
+        on whitespace, and each piece may contain glob wildcards (expanded
+        and sorted). A list of paths is used as is.
+
+    Returns
+    -------
+    files: list
+        List of file paths.
+    """
+    if isinstance(mov_data_files, os.PathLike):
+        files = [os.fspath(mov_data_files)]
+    elif isinstance(mov_data_files, str):
+        if os.path.isfile(mov_data_files):
+            files = [mov_data_files]
+        else:
+            files = []
+            for piece in mov_data_files.split():
+                if glob.has_magic(piece):
+                    matches = sorted(glob.glob(piece))
+                    if not matches:
+                        raise FileNotFoundError(f"No file matches: {piece}")
+                    files.extend(matches)
+                else:
+                    files.append(piece)
+    else:
+        files = [os.fspath(path) for path in mov_data_files]
+
+    if not files:
+        raise FileNotFoundError("No moving dataset file given.")
+    return files
 
 
 def robust_script(mov_data_files, robust_method):
     """
     Run `combat_robust` for a set of moving dataset files.
 
-    mov_data_files: str
-        Space-separated paths to moving dataset files.
+    mov_data_files: str, os.PathLike or list
+        Paths to moving dataset files: a single path (os.PathLike, or a
+        string that is an existing file), a string of whitespace-separated
+        paths or glob patterns (for example 'dir/train_100_70_3_*.csv'),
+        or a list of paths.
     robust_method: str
         Robust harmonization strategy identifier.
     """
-    cmd = f"combat_robust {mov_data_files} --method {robust_method}"
-    subprocess.call(cmd, shell=True)
+    files = _expand_data_files(mov_data_files)
+    subprocess.run(
+        ["combat_robust", *files, "--method", robust_method], check=True
+    )
 
 
 def fit_script(
     mov_data_file,
     ref_data_file,
     metric,
-    harmonizartion_method,
+    harmonization_method,
     robust,
     directory,
     robust_threshold=None,
@@ -91,7 +135,7 @@ def fit_script(
         Path to the reference dataset file.
     metric: str
         Metric name used for harmonization.
-    harmonizartion_method: str
+    harmonization_method: str
         Harmonization method used.
     robust: str
         Robust harmonization method used.
@@ -108,7 +152,7 @@ def fit_script(
         Path to the fitted model file.
     """
     output_model_filename = get_output_model_filename(
-        mov_data_file, metric, harmonizartion_method, robust
+        mov_data_file, metric, harmonization_method, robust
     )
     output_model_path = os.path.join(directory, output_model_filename)
     if os.path.exists(output_model_path):
@@ -123,17 +167,17 @@ def fit_script(
         "--output_model_filename",
         output_model_filename,
         "--method",
-        harmonizartion_method,
+        harmonization_method,
         "--robust",
         robust,
         "-f",
     ]
     if robust_threshold is not None:
-        cmd_parts.extend(["--robust-threshold", str(robust_threshold)])
+        cmd_parts.extend(["--robust_threshold", str(robust_threshold)])
     if not eb:
         cmd_parts.append("--no_empirical_bayes")
 
-    subprocess.call(" ".join(cmd_parts), shell=True)
+    subprocess.run(cmd_parts, check=True)
     return output_model_path
 
 
@@ -141,7 +185,7 @@ def apply_script(
     mov_data_file,
     model_filename,
     metric,
-    harmonizartion_method,
+    harmonization_method,
     robust,
     directory,
 ):
@@ -154,7 +198,7 @@ def apply_script(
         Filename of the fitted model to load.
     metric: str
         Metric name used for harmonization.
-    harmonizartion_method: str
+    harmonization_method: str
         Harmonization method used.
     robust: str
         Robust harmonization method used.
@@ -167,7 +211,7 @@ def apply_script(
         Path to the harmonized results file.
     """
     output_filename = get_output_filename(
-        mov_data_file, metric, harmonizartion_method, robust
+        mov_data_file, metric, harmonization_method, robust
     )
     output_file_path = os.path.join(directory, output_filename)
     if os.path.exists(output_file_path):
@@ -182,7 +226,7 @@ def apply_script(
         "--output_results_filename",
         output_filename,
     ]
-    subprocess.call(" ".join(cmd_parts), shell=True)
+    subprocess.run(cmd_parts, check=True)
     return output_file_path
 
 
@@ -200,13 +244,14 @@ def visualize_harmonization(
         Path to the reference dataset file.
     directory: str
         Output directory for visualization artifacts.
-    bundles: str
-        Optional bundle filter passed to the visualization script.
+    bundles: str or list
+        Optional bundle filter passed to the visualization script, as a
+        string of whitespace-separated bundle names or a list of names.
     title: str
         Optional title suffix for output files.
     """
     cmd_parts = [
-        "scripts/combat_visualize_harmonization.py",
+        "combat_visualize_harmonization",
         ref_data_file,
         f,
         new_f,
@@ -215,11 +260,12 @@ def visualize_harmonization(
         "-f",
     ]
     if bundles:
-        cmd_parts.extend(["--bundles", bundles])
+        bundle_names = bundles.split() if isinstance(bundles, str) else bundles
+        cmd_parts.extend(["--bundles", *bundle_names])
     if title:
         cmd_parts.extend(["--outname", title, "--add_suffix", title])
 
-    subprocess.call(" ".join(cmd_parts), shell=True)
+    subprocess.run(cmd_parts, check=True)
 
 
 def calculate_mae_std(df, compilation_df):

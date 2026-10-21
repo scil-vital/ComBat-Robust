@@ -98,6 +98,7 @@ def predict_outliers_mlp(df, run_name):
     state_dict = torch.load(
         MODEL_DIR / f"{run_name}_weights.pt",
         map_location="cpu",
+        weights_only=True,
     )
 
     with open(MODEL_DIR / f"{run_name}_params.json", encoding="utf-8") as fp:
@@ -137,6 +138,32 @@ def predict_outliers_mlp(df, run_name):
             "prob_outlier": proba.astype(float),
         }
     )
+
+
+_ACTIVATIONS = {
+    "relu": nn.ReLU,
+    "gelu": nn.GELU,
+    "leaky_relu": lambda: nn.LeakyReLU(negative_slope=0.01),
+    "elu": nn.ELU,
+    "tanh": nn.Tanh,
+}
+
+
+def _make_activation(name):
+    """
+    Instantiate an activation module from its name.
+
+    name: str or None
+        'relu', 'gelu', 'leaky_relu', 'elu' or 'tanh' (case-insensitive).
+        None and unknown names fall back to ReLU.
+
+    Returns
+    -------
+    activation: nn.Module
+        New activation module.
+    """
+    name = (name or "relu").lower()
+    return _ACTIVATIONS.get(name, nn.ReLU)()
 
 
 class PatientMLP(nn.Module):
@@ -184,20 +211,6 @@ class PatientMLP(nn.Module):
             activation = config.get("activation", activation)
             batch_norm = config.get("batch_norm", batch_norm)
 
-        def _act(name):
-            name = (name or "relu").lower()
-            if name == "relu":
-                return nn.ReLU()
-            if name == "gelu":
-                return nn.GELU()
-            if name == "leaky_relu":
-                return nn.LeakyReLU(negative_slope=0.01)
-            if name == "elu":
-                return nn.ELU()
-            if name == "tanh":
-                return nn.Tanh()
-            return nn.ReLU()
-
         if isinstance(drop, (int, float)):
             drop_list = [float(drop)] * len(hidden_dims)
         else:
@@ -215,7 +228,7 @@ class PatientMLP(nn.Module):
             layers.append(nn.Linear(prev, h))
             if batch_norm:
                 layers.append(nn.BatchNorm1d(h))
-            layers.append(_act(activation))
+            layers.append(_make_activation(activation))
             if pdrop and pdrop > 0:
                 layers.append(nn.Dropout(pdrop))
             prev = h
@@ -264,13 +277,7 @@ def build_mlp_from_config(cfg=None):
     if cfg:
         merged.update(cfg)
 
-    return PatientMLP(
-        in_features=merged.get("in_features", 430),
-        hidden_dims=merged.get("hidden_dims", (256, 128, 64)),
-        drop=merged.get("dropout", 0.3),
-        activation=merged.get("activation", "relu"),
-        batch_norm=merged.get("batch_norm", True),
-    )
+    return PatientMLP(config=merged)
 
 
 class PatientDataset(Dataset):

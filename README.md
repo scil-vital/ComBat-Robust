@@ -6,10 +6,10 @@ This repository is a fork of [Clinical-ComBAT](https://github.com/scil-vital/cli
 
 ## References
 
-- ComBat-Robust reference: forthcoming.
+- David, Y., Jodoin, P.-M., et al. (2026). *Robust-ComBat: Mitigating Outlier Effects in Diffusion MRI Data Harmonization*. arXiv:2603.17968. https://arxiv.org/abs/2603.17968
 - Girard, G., Edde, M., Dumais, F., et al. (2025). *Clinical-ComBAT: a diffusion MRI harmonization method for clinical normative modeling applications*. Submitted to Medical Image Analysis.
 - Jodoin, P.-M., Edde, M., Girard, G., et al. (2025). Challenges and best practices when using ComBAT to harmonize diffusion MRI data. *Nature Scientific Reports*, 15, 41508. https://www.nature.com/articles/s41598-025-25400-x
-- Fortin, J.-P., Parker, D., Tun¸c, B., et al. (2017). Harmonization of multi-site diffusion tensor imaging data. *NeuroImage*, 161, 149–170. https://doi.org/10.1016/j.neuroimage.2017.08.047
+- Fortin, J.-P., Parker, D., Tunç, B., et al. (2017). Harmonization of multi-site diffusion tensor imaging data. *NeuroImage*, 161, 149–170. https://doi.org/10.1016/j.neuroimage.2017.08.047
 
 ## License
 
@@ -39,7 +39,7 @@ uv pip install --upgrade pip
 
 Then:
 ```bash
-# 1) create a Python >= 3.9 environment
+# 1) create a Python environment (3.10 to 3.12)
 python -m venv .venv
 source .venv/bin/activate
 
@@ -66,7 +66,7 @@ sid,site,bundle,metric,mean,age,sex,handedness,disease
   - use integer values (1 or 2) for `sex` and `handedness`; if unknown, fill with `1` and the scripts will disable that effect
 - `disease`: flag; any row whose value is not `HC` is dropped before model fitting if the HC robust method is used
 
-Complete examples (`CamCAN.md.raw.csv.gz` and `ModifiedCamCAN.md.raw.csv.gz`) are available in `src/clinical_combat/data/`. Paper data can be retrieved on Zenodo (DOI to be published).
+Complete examples (`CamCAN.md.raw.csv.gz` and `ModifiedCamCAN.md.raw.csv.gz`) are available in `src/clinical_combat/data/`. Paper data will be available on [Zenodo](https://doi.org/10.5281/zenodo.18802256).
 
 ## Quick example
 
@@ -80,6 +80,8 @@ combat_robust \
 ```
 This adds an `MLP_TEST` outlier score column to each file. You can then filter observations based on this score before harmonization.
 
+The files are rewritten in place, so work on copies if you want to keep the originals. MLP weights are read from `Pytorch_models/` in the current directory, so run MLP methods from the repository root.
+
 ### Step 2: Run the standard ComBat pipeline
 
 Then run the `combat_pipeline` script to harmonize the data using the outlier method defined above:
@@ -90,9 +92,9 @@ combat_pipeline \
     --method pairwise \
     --robust MLP_TEST \
     --out_dir quicktest_demo_MLP/ \
-    --bundle "mni_ICP_R"
+    --bundles "mni_ICP_R"
 ```
-In a single command, the pipeline chains fit → apply → QC → figures. Main outputs include the model, the harmonized data, and QC metrics/figures inside `quickstart_demo_MLP/`.
+In a single command, the pipeline chains fit → apply → QC → figures. Main outputs include the model, the harmonized data, and QC metrics/figures inside `quicktest_demo_MLP/`.
 
 ### Comparison without filtering
 
@@ -104,7 +106,7 @@ combat_pipeline \
     --method pairwise \
     --robust NO \
     --out_dir quicktest_demo_NO/ \
-    --bundle "mni_ICP_R"
+    --bundles "mni_ICP_R"
 ```
 ## Main scripts
 
@@ -113,14 +115,18 @@ combat_pipeline \
 `combat_robust` applies the selected outlier detection method to the provided CSV files, computes an outlier score for each row, and appends these columns to the files before harmonization. All files must be from the same site. The files are saved back with the same name, and no rows are dropped at this stage. Actual filtering is performed later in the pipeline script, where you specify the robust method and optionally the associated threshold.
 
 - `data` *(required, one or more from the same site)*: CSV paths or glob patterns (`*`) to process.
-- `--method` (default `HC`): outlier detection method.
-  - Statistical methods: `ZS`, `MAD`, `IQR`, `SN`, `QN`, `VS`, `MMS`, `G_ZS`, `G_MAD`.
-  - `MLP*`: neural network–based outlier detection.
+- `--method` (default `MAD`, case-insensitive): outlier detection method.
+  - Bundle-level methods (one score per subject and bundle): `ZS`, `MAD`, `SN`, `QN`, `VS`, `MMS`.
+  - Subject-level methods (one score per subject, computed jointly on all metrics and bundles of the site): `G_ZS`, `G_MAD`.
+  - `PCA_ZS`, `PCA_MAD`: `G_ZS` and `G_MAD` applied to the first 15 principal components of the standardized features of the site, which limits the weight of collinear metrics.
+  - `MLP*`: neural network–based outlier detection (subject level).
     - `MLP_TEST`: uses the pre-trained model provided in this repository.
     - `MLP_<model_name>`: uses a custom trained MLP model.
-  - `HC`: uses only Healthy Controls (ideal scenario).
-  - `NO`: no outlier filtering, all subjects are used as-is.
-- `--metrics` (default `ad adt afd fa fat fw md mdt rd rdt`): allowed metrics; files containing others are rejected.
+  - `IQR`, `HC` and `NO` add no column, because they act when the model is fitted (`--robust` of `combat_fit` and `combat_pipeline`).
+    - `IQR`: removes values outside the interquartile fences of each bundle.
+    - `HC`: uses only Healthy Controls (ideal scenario).
+    - `NO`: no outlier filtering, all subjects are used as-is.
+- `--metrics` (default `ad adt afd fa fat fw md mdt rd rdt`): allowed metrics. Each file must hold a single metric, and files containing others are rejected.
 - `--verbose/-v` (default `WARNING`; `INFO` with `-v`): logging level.
 - Writes back to the same files, adding a column named after `--method` with the score/flag.
 
@@ -145,8 +151,8 @@ combat_robust \
 - `--ignore_sex`, `--ignore_handedness` (default false): drop these covariates.
 - `--limit_age_range` (default false): restrict reference subjects to the moving-site age span.
 - `--no_empirical_bayes` (default false): skip empirical Bayes estimates.
-- `--robust` (default `HC`): outlier filtering on moving data before fit (MAD, IQR, VS, MLP2_ALL, HC, NO).
-- `--robust_threshold` (default method-specific): override the robust filtering threshold.
+- `--robust` (default `HC`): outlier filtering on moving data before fit. Any `combat_robust` method (its score column must already be in the file), or `IQR`, `HC`, `NO`.
+- `--robust_threshold` (default method-specific, see below): override the robust filtering threshold.
 - `--regul_ref` (default 0): ridge penalty on the reference regression.
 - `--regul_mov` (default -1 for clinical, 0 for pairwise): moving-site penalty or auto-tuning.
 - `--degree` (default 2 clinical, 1 pairwise): polynomial degree for age.
@@ -162,6 +168,16 @@ combat_robust \
 - `--degree_qc` (default 0): QC model degree (0 reuses harmonization degree).
 - `--verbose/-v` (default `WARNING`; `INFO` with `-v`): logging verbosity.
 - `--overwrite/-f` (default false): allow overwriting existing files.
+
+Default thresholds of `--robust`. A row is removed when its score is greater than or equal to the threshold.
+
+| Method | Default threshold |
+|---|---|
+| `ZS`, `MAD`, `SN`, `QN` | 3.0 |
+| `IQR` | 1.5 (fence multiplier) |
+| `VS`, `MMS` | flagged rows (binary flag) |
+| `G_ZS`, `G_MAD`, `PCA_ZS`, `PCA_MAD` | 1.0 |
+| `MLP*` | 0.6 |
 
 Sequence:
 1. Fits the model with `combat_fit` (applying robust filtering if set) and saves `*.model.csv`.
@@ -192,3 +208,4 @@ The notebooks below allow you to rerun most of the experiments reported in the p
 - `4-MLP_Training.ipynb`: trains the MLP outlier detector variants.
 - `5-STD_MAE_Calculations.ipynb`: computes STD_MAE metrics across harmonization methods, outlier handling methods, and synthetic sites.
 - `6-STD_MAE_Plots.ipynb`: creates the plots used in the manuscript from the results obtained in notebook 5.
+- `7-Effect_Size_Preservation.ipynb`: measures how well each outlier method preserves the effect size of each disease (Cohen's d against CamCAN) after harmonization, on the 240 synthetic control sites.
